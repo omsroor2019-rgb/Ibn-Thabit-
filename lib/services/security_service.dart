@@ -5,6 +5,14 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 
+class DatabaseKeyMissingException implements Exception {
+  const DatabaseKeyMissingException(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class SecurityService {
   SecurityService._();
   static final SecurityService instance = SecurityService._();
@@ -129,22 +137,27 @@ class SecurityService {
         throw const FormatException('invalid database key length');
       }
     } catch (_) {
-      throw StateError('مفتاح تشفير قاعدة البيانات المحفوظ غير صالح. لم نغيّره حفاظًا على البيانات.');
+      // The encrypted DB cannot be opened with an invalid key record. Route
+      // this to the same explicit recovery screen as a missing key; never
+      // overwrite the value during ordinary startup.
+      throw const DatabaseKeyMissingException(
+        'مفتاح تشفير قاعدة البيانات المحفوظ غير صالح. لم نستبدله تلقائيًا حفاظًا على الملف القديم. '
+        'يمكن استعادة نسخة احتياطية مشفرة أو بدء دفتر جديد بعد أرشفة الملف القديم.',
+      );
     }
     return stored;
   }
 
-  Future<String> getOrCreateDatabasePassword({bool databaseExists = false}) async {
+  Future<String> getOrCreateDatabasePassword({required bool databaseExists}) async {
     final stored = await readDatabasePassword();
     if (stored != null) return stored;
 
     // Never invent a new key for an existing encrypted DB. Doing so would
     // make the old file permanently unreadable with the newly generated key.
     if (databaseExists) {
-      throw StateError(
+      throw const DatabaseKeyMissingException(
         'ملف قاعدة البيانات موجود لكن مفتاح التشفير غير موجود في التخزين الآمن. '
-        'أوقفنا إنشاء مفتاح بديل لحماية بياناتك. لا تحذف التطبيق أو ملف قاعدة البيانات؛ '
-        'يلزم استرجاع المفتاح الأصلي أو استعادة نسخة احتياطية مشفرة.',
+        'يمكن استعادة نسخة احتياطية مشفرة، أو بدء دفتر جديد بعد أرشفة الملف القديم.',
       );
     }
 
@@ -155,6 +168,14 @@ class SecurityService {
       throw StateError('تعذر حفظ مفتاح تشفير قاعدة البيانات في التخزين الآمن.');
     }
     return value;
+  }
+
+  Future<bool> hasValidDatabasePassword() async {
+    try {
+      return await readDatabasePassword() != null;
+    } on DatabaseKeyMissingException {
+      return false;
+    }
   }
 
   Future<void> replaceDatabasePassword(String value) async {
@@ -172,6 +193,35 @@ class SecurityService {
     }
   }
 
+
+  /// Creates random key material without storing it. It is committed only
+  /// after a durable recovery journal has been written.
+  String generateDatabasePasswordForReset() => base64Encode(_randomBytes(32));
+
+  /// Begins an explicit, user-confirmed reset when the previous SQLCipher key
+  /// is missing and the user has chosen to start a new empty ledger.
+  Future<void> beginEmptyDatabaseReset(String newPassword, String archiveSuffix) async {
+    try {
+      if (base64Decode(newPassword).length != 32) throw const FormatException();
+    } catch (_) {
+      throw ArgumentError('مفتاح قاعدة البيانات الجديدة غير صالح');
+    }
+    if (!RegExp(r'^locked-\d+$').hasMatch(archiveSuffix)) {
+      throw ArgumentError('اسم أرشيف قاعدة البيانات غير صالح');
+    }
+    if (await hasValidDatabasePassword()) {
+      throw StateError('مفتاح قاعدة البيانات موجود؛ أوقفنا إعادة التهيئة لحماية الحسابات');
+    }
+    await _storage.write(
+      key: _databaseRestoreJournalKey,
+      value: jsonEncode({
+        'version': 3,
+        'mode': 'empty_database_reset',
+        'newPassword': newPassword,
+        'archiveSuffix': archiveSuffix,
+      }),
+    );
+  }
 
   Future<void> beginDatabaseRestore(String oldPassword, String newPassword) async {
     final oldBytes = base64Decode(oldPassword);
@@ -214,6 +264,23 @@ class SecurityService {
     try {
       final value = jsonDecode(raw);
       if (value is! Map<String, dynamic>) throw const FormatException();
+
+      if (value['version'] == 3 &&
+          value['mode'] == 'empty_database_reset' &&
+          value['newPassword'] is String &&
+          value['archiveSuffix'] is String) {
+        final newPassword = value['newPassword'] as String;
+        final archiveSuffix = value['archiveSuffix'] as String;
+        if (base64Decode(newPassword).length != 32 ||
+            !RegExp(r'^locked-\d+$').hasMatch(archiveSuffix)) {
+          throw const FormatException();
+        }
+        return {
+          'mode': 'empty_database_reset',
+          'newPassword': newPassword,
+          'archiveSuffix': archiveSuffix,
+        };
+      }
 
       if (value['version'] == 2 &&
           value['mode'] == 'restore_without_old_password' &&
