@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Exercise the Android preparation script against a minimal Flutter scaffold."""
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import xml.etree.ElementTree as ET
+
+ROOT = Path(__file__).resolve().parents[1]
+
+with tempfile.TemporaryDirectory(prefix='bin-thabit-android-check-') as temp:
+    work = Path(temp)
+    shutil.copy2(ROOT / 'tool/prepare_android.sh', work / 'prepare_android.sh')
+    shutil.copytree(ROOT / 'tool/android', work / 'tool/android')
+
+    manifest = work / 'android/app/src/main/AndroidManifest.xml'
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text('''<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.binthabit.bin_thabit">
+    <application android:label="bin_thabit">
+        <activity android:name=".MainActivity" />
+    </application>
+</manifest>
+''', encoding='utf-8')
+
+    activity = work / 'android/app/src/main/kotlin/com/binthabit/bin_thabit/MainActivity.kt'
+    activity.parent.mkdir(parents=True)
+    activity.write_text('package com.binthabit.bin_thabit\n', encoding='utf-8')
+
+    build = work / 'android/app/build.gradle.kts'
+    build.parent.mkdir(parents=True, exist_ok=True)
+    build.write_text('''android {
+    defaultConfig { minSdk = flutter.minSdkVersion }
+    buildTypes {
+        release {
+        }
+    }
+}
+''', encoding='utf-8')
+
+    subprocess.run(['bash', 'prepare_android.sh'], cwd=work, check=True)
+
+    tree = ET.parse(manifest)
+    app = tree.getroot().find('application')
+    assert app is not None
+    ns = '{http://schemas.android.com/apk/res/android}'
+    assert app.attrib[ns + 'allowBackup'] == 'false'
+    assert app.attrib[ns + 'fullBackupContent'] == '@xml/bin_thabit_backup_rules'
+    assert app.attrib[ns + 'dataExtractionRules'] == '@xml/bin_thabit_data_extraction_rules'
+    assert app.attrib[ns + 'usesCleartextTraffic'] == 'false'
+    assert app.attrib[ns + 'label'] == 'بن ثابت'
+
+    for name in ('bin_thabit_backup_rules.xml', 'bin_thabit_data_extraction_rules.xml'):
+        ET.parse(work / 'android/app/src/main/res/xml' / name)
+
+    kotlin = activity.read_text(encoding='utf-8')
+    assert 'FLAG_SECURE' in kotlin
+    gradle = build.read_text(encoding='utf-8')
+    assert 'minSdk = 24' in gradle and 'proguardFiles(' in gradle
+    proguard = work / 'android/app/proguard-rules.pro'
+    assert proguard.exists() and 'net.sqlcipher' in proguard.read_text(encoding='utf-8')
+
+print('PASS: Android manifest labels, cleartext, backup exclusions and device-transfer rules')
+print('PASS: generated MainActivity retains FLAG_SECURE')
+print('PASS: Android minSdk and SQLCipher ProGuard configuration')
