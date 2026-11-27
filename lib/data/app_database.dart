@@ -29,6 +29,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   Database? _database;
+  Future<Database>? _opening;
   bool _snapshotInProgress = false;
   bool _restoreSwapInProgress = false;
 
@@ -38,7 +39,25 @@ class AppDatabase {
     while (_snapshotInProgress || _restoreSwapInProgress) {
       await Future<void>.delayed(const Duration(milliseconds: 40));
     }
-    return _database ??= await _open();
+    return _openSingleFlight();
+  }
+
+  Future<Database> _openSingleFlight() async {
+    final opened = _database;
+    if (opened != null) return opened;
+
+    final pending = _opening;
+    if (pending != null) return pending;
+
+    final opening = _open();
+    _opening = opening;
+    try {
+      final db = await opening;
+      _database = db;
+      return db;
+    } finally {
+      if (identical(_opening, opening)) _opening = null;
+    }
   }
 
   Future<String> get databasePath async {
@@ -79,8 +98,14 @@ class AppDatabase {
       if (await probe.exists()) await probe.delete();
     }
 
-    final databaseFile = File(filePath);
-    final databaseExists = await databaseFile.exists() && await databaseFile.length() > 0;
+    // Any artifact of the DB set means this is not a clean first launch.
+    // A zero-byte main file can be left by an interrupted native open, and a
+    // WAL/journal can carry data even if the main file is absent. In all such
+    // cases require the original key or explicit recovery; never mint a key.
+    final databaseExists = await File(filePath).exists() ||
+        await File('$filePath-wal').exists() ||
+        await File('$filePath-shm').exists() ||
+        await File('$filePath-journal').exists();
     final password = await SecurityService.instance.getOrCreateDatabasePassword(
       databaseExists: databaseExists,
     );
@@ -272,10 +297,13 @@ class AppDatabase {
       final dbLength = dbExists ? await databaseFile.length() : 0;
       final walFile = File('$filePath-wal');
       final shmFile = File('$filePath-shm');
+      final journalFile = File('$filePath-journal');
       final walLength = await walFile.exists() ? await walFile.length() : 0;
       final shmLength = await shmFile.exists() ? await shmFile.length() : 0;
+      final journalLength = await journalFile.exists() ? await journalFile.length() : 0;
       final diagnostic = 'DATABASE_OPEN_FAILED; exists=$dbExists; bytes=$dbLength; '
-          'walBytes=$walLength; shmBytes=$shmLength; path=$filePath; cause=$error';
+          'walBytes=$walLength; shmBytes=$shmLength; journalBytes=$journalLength; '
+          'path=$filePath; cause=$error';
       Error.throwWithStackTrace(StateError(diagnostic), stackTrace);
     }
   }
@@ -289,8 +317,12 @@ class AppDatabase {
       await source.copy(checkPath);
       // WAL may contain committed data not yet folded into the main file.
       // The -shm file is transient and is always rebuilt by SQLite.
-      final sourceWal = File('$sourcePath-wal');
-      if (await sourceWal.exists()) await sourceWal.copy('$checkPath-wal');
+      for (final suffix in ['-wal', '-journal']) {
+        final sourceSidecar = File('$sourcePath$suffix');
+        if (await sourceSidecar.exists()) {
+          await sourceSidecar.copy('$checkPath$suffix');
+        }
+      }
       candidate = await openDatabase(checkPath, password: password, singleInstance: false);
       final integrity = await candidate.rawQuery('PRAGMA integrity_check');
       final status = integrity.isEmpty ? '' : integrity.first.values.first.toString().toLowerCase();
@@ -306,7 +338,7 @@ class AppDatabase {
       return false;
     } finally {
       await candidate?.close();
-      for (final suffix in ['', '-wal', '-shm']) {
+      for (final suffix in ['', '-wal', '-shm', '-journal']) {
         final temp = File('$checkPath$suffix');
         if (await temp.exists()) {
           try { await temp.delete(); } catch (_) { /* best-effort recovery cleanup */ }
@@ -319,19 +351,22 @@ class AppDatabase {
     final target = File(path);
     final wal = File('$path-wal');
     final shm = File('$path-shm');
+    final journal = File('$path-journal');
     final rollback = File('$path.rollback');
     final rollbackWal = File('$path.rollback-wal');
-    for (final file in [target, wal, shm]) {
+    final rollbackJournal = File('$path.rollback-journal');
+    for (final file in [target, wal, shm, journal]) {
       if (await file.exists()) await file.delete();
     }
     if (!await rollback.exists()) throw StateError('ملف الاستعادة الأصلي غير موجود');
     await rollback.copy(path);
     if (await rollbackWal.exists()) await rollbackWal.copy('$path-wal');
+    if (await rollbackJournal.exists()) await rollbackJournal.copy('$path-journal');
   }
 
   Future<void> _preserveDatabaseSetWithoutKey(String path) async {
     final stamp = DateTime.now().microsecondsSinceEpoch;
-    for (final suffix in ['', '-wal', '-shm']) {
+    for (final suffix in ['', '-wal', '-shm', '-journal']) {
       final source = File('$path$suffix');
       if (await source.exists()) {
         final preserved = File('$path.locked-$stamp$suffix');
@@ -346,6 +381,40 @@ class AppDatabase {
     final newPassword = journal['newPassword']!;
     final target = File(path);
 
+    // Complete a user-confirmed fresh-ledger reset after an interrupted file
+    // archive. The prior encrypted database is copied and verified before any
+    // active file is removed; the archive is never opened with a guessed key.
+    if (journal['mode'] == 'empty_database_reset') {
+      final archiveSuffix = journal['archiveSuffix']!;
+      final suffixes = ['', '-wal', '-shm', '-journal'];
+      final pairs = <(File, File)>[];
+      for (final suffix in suffixes) {
+        final source = File('$path$suffix');
+        final archived = File('$path.$archiveSuffix$suffix');
+        if (await source.exists()) {
+          if (!await archived.exists()) {
+            await source.copy(archived.path);
+          }
+          final sourceLength = await source.length();
+          final archiveLength = await archived.length();
+          if (sourceLength != archiveLength) {
+            throw StateError('تعذر التحقق من أرشيف قاعدة البيانات القديمة؛ لم نحذف الملف الأصلي');
+          }
+          pairs.add((source, archived));
+        }
+      }
+      for (final pair in pairs) {
+        if (await pair.$1.exists()) await pair.$1.delete();
+      }
+      await SecurityService.instance.replaceDatabasePassword(newPassword);
+      await SecurityService.instance.finishDatabaseRestore();
+      final resetLock = File('$path.operation.lock');
+      if (await resetLock.exists()) {
+        try { await resetLock.delete(); } catch (_) { /* stale lock cleanup can be retried */ }
+      }
+      return;
+    }
+
     // A separately authenticated backup can be restored even when the old
     // SQLCipher key is gone. Keep the old encrypted bytes as a locked copy.
     if (journal['mode'] == 'without_old_password') {
@@ -358,7 +427,7 @@ class AppDatabase {
           );
         }
         await _preserveDatabaseSetWithoutKey(path);
-        for (final suffix in ['', '-wal', '-shm']) {
+        for (final suffix in ['', '-wal', '-shm', '-journal']) {
           final active = File('$path$suffix');
           if (await active.exists()) await active.delete();
         }
@@ -407,6 +476,48 @@ class AppDatabase {
       }
     }
     if (!await target.exists()) throw StateError('قاعدة البيانات غير موجودة بعد استعادة الحالة السابقة');
+  }
+
+  /// Archives an inaccessible encrypted DB and initializes a new empty DB.
+  /// This method is reachable only from an explicit confirmation screen.
+  Future<void> startFreshDatabaseAfterMissingKey() async {
+    await close();
+    final path = await databasePath;
+    final operationLock = File('$path.operation.lock');
+    if (await operationLock.exists()) {
+      final age = DateTime.now().difference((await operationLock.stat()).modified);
+      if (age > const Duration(minutes: 30)) {
+        try { await operationLock.delete(); } catch (_) { /* another worker may own it */ }
+      }
+      if (await operationLock.exists()) {
+        throw StateError('هناك عملية نسخ أو استعادة جارية؛ لا يمكن بدء دفتر جديد الآن');
+      }
+    }
+    if (await SecurityService.instance.hasValidDatabasePassword()) {
+      throw StateError('مفتاح التشفير موجود بالفعل؛ أوقفنا إعادة التهيئة لحماية البيانات');
+    }
+    if (await SecurityService.instance.readDatabaseRestoreJournal() != null) {
+      throw StateError('توجد عملية استعادة غير مكتملة؛ أكمل الاستعادة قبل بدء دفتر جديد');
+    }
+
+    try {
+      await operationLock.create(exclusive: true);
+    } on FileSystemException {
+      throw StateError('بدأت عملية نسخ أو استعادة أخرى؛ حاول مرة أخرى');
+    }
+    try {
+      final newPassword = SecurityService.instance.generateDatabasePasswordForReset();
+      final archiveSuffix = 'locked-${DateTime.now().microsecondsSinceEpoch}';
+      await SecurityService.instance.beginEmptyDatabaseReset(newPassword, archiveSuffix);
+      // Uses the same recovery path as app startup, so a process interruption
+      // cannot leave a new key paired with the previous encrypted file.
+      await _recoverInterruptedRestore(path);
+      await database;
+    } finally {
+      if (await operationLock.exists()) {
+        try { await operationLock.delete(); } catch (_) { /* recover stale lock on next startup */ }
+      }
+    }
   }
 
   void beginRestoreSwap() => _restoreSwapInProgress = true;
@@ -947,7 +1058,7 @@ class AppDatabase {
       } on FileSystemException {
         throw StateError('هناك عملية نسخ أو استعادة أخرى؛ حاول لاحقًا');
       }
-      final active = _database ??= await _open();
+      final active = await _openSingleFlight();
       // In DELETE journal mode committed transactions are already in the main
       // database file; closing the sole foreground connection makes the file
       // safe to snapshot. Do not manually operate on WAL sidecars.
@@ -981,12 +1092,17 @@ class AppDatabase {
   }
 
   Future<void> close() async {
-    await _database?.close();
+    final pending = _opening;
+    if (pending != null) {
+      try { await pending; } catch (_) { /* open errors are reported by the caller */ }
+    }
+    final current = _database;
     _database = null;
+    await current?.close();
   }
 
   Future<void> reopen() async {
     await close();
-    _database = await _open();
+    await _openSingleFlight();
   }
 }
