@@ -191,13 +191,40 @@ class SecurityService {
     );
   }
 
+  /// Starts a recovery restore when the previous database key is missing.
+  /// This is allowed only after an external backup has been decrypted and its
+  /// SQLCipher database has passed integrity checks.
+  Future<void> beginDatabaseRestoreWithoutOldPassword(String newPassword) async {
+    if (base64Decode(newPassword).length != 32) {
+      throw ArgumentError('مفتاح قاعدة البيانات الجديدة غير صالح');
+    }
+    await _storage.write(
+      key: _databaseRestoreJournalKey,
+      value: jsonEncode({
+        'version': 2,
+        'mode': 'restore_without_old_password',
+        'newPassword': newPassword,
+      }),
+    );
+  }
+
   Future<Map<String, String>?> readDatabaseRestoreJournal() async {
     final raw = await _storage.read(key: _databaseRestoreJournalKey);
     if (raw == null) return null;
     try {
       final value = jsonDecode(raw);
-      if (value is! Map<String, dynamic> || value['version'] != 1 ||
-          value['oldPassword'] is! String || value['newPassword'] is! String) {
+      if (value is! Map<String, dynamic>) throw const FormatException();
+
+      if (value['version'] == 2 &&
+          value['mode'] == 'restore_without_old_password' &&
+          value['newPassword'] is String) {
+        final newPassword = value['newPassword'] as String;
+        if (base64Decode(newPassword).length != 32) throw const FormatException();
+        return {'mode': 'without_old_password', 'newPassword': newPassword};
+      }
+
+      if (value['version'] != 1 || value['oldPassword'] is! String ||
+          value['newPassword'] is! String) {
         throw const FormatException();
       }
       final oldPassword = value['oldPassword'] as String;
@@ -205,7 +232,7 @@ class SecurityService {
       if (base64Decode(oldPassword).length != 32 || base64Decode(newPassword).length != 32) {
         throw const FormatException();
       }
-      return {'oldPassword': oldPassword, 'newPassword': newPassword};
+      return {'mode': 'with_old_password', 'oldPassword': oldPassword, 'newPassword': newPassword};
     } catch (_) {
       throw StateError('سجل استعادة قاعدة البيانات تالف؛ أوقفنا الفتح لحماية البيانات');
     }
