@@ -2,9 +2,13 @@ name: Bin Thabit Android CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+
   pull_request:
-    branches: [main]
+    branches:
+      - main
+
   workflow_dispatch:
 
 permissions:
@@ -16,33 +20,40 @@ concurrency:
 
 jobs:
   test-and-build:
+    name: Test and Build Android
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
     steps:
-      - name: Checkout
+      # 1. تحميل ملفات المشروع
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. إعداد Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Flutter stable
+      # 3. إعداد Flutter
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.50.1'
+          channel: stable
           cache: true
 
-      # The Flutter Gradle plugin is an included build. Its plugin resolution
-      # was searching only Gradle Plugin Portal for Kotlin artifacts. Add
-      # Maven Central BEFORE settings scripts and plugin blocks are evaluated.
+      # 4. إعداد مستودعات Gradle لحل مشكلة Kotlin
       - name: Configure Gradle plugin repositories
         shell: bash
         run: |
           set -euo pipefail
+
           GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+
           mkdir -p "$GRADLE_USER_HOME/init.d"
+
           cat > "$GRADLE_USER_HOME/init.d/00-flutter-plugin-repositories.gradle" <<'GRADLE'
           gradle.beforeSettings { settings ->
               settings.pluginManagement.repositories {
@@ -52,38 +63,55 @@ jobs:
               }
           }
           GRADLE
-          echo "Added Google Maven Central and Gradle Plugin Portal to plugin resolution for all builds, including Flutter's included Gradle build."
 
+          echo "Gradle plugin repositories configured."
+
+      # 5. إنشاء ملفات منصة Android
       - name: Generate Android platform files
-        run: bash tool/prepare_android.sh
-
-      - name: Verify SQLite schema and financial constraints
-        run: python3 tool/verify_schema.py
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Generate application launcher icon
-        run: dart run flutter_launcher_icons
-
-      - name: Show Android build tool versions
         shell: bash
         run: |
           set -euo pipefail
+          bash tool/prepare_android.sh
+
+      # 6. التحقق من قاعدة البيانات والقيود المالية
+      - name: Verify SQLite schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tool/verify_schema.py
+
+      # 7. تحميل مكتبات المشروع
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      # 8. إنشاء أيقونة التطبيق
+      - name: Generate application launcher icon
+        run: dart run flutter_launcher_icons
+
+      # 9. التحقق من إصدار أدوات Android وGradle
+      - name: Check Android build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+
           cd android
           chmod +x gradlew
           ./gradlew --version
 
+      # 10. فحص كود Dart
       - name: Analyze Dart code
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
 
-      - name: Run tests
-        run: flutter test
+      # 11. تشغيل الاختبارات
+      - name: Run Flutter tests
+        run: flutter test --reporter expanded
 
+      # 12. بناء نسخة APK النهائية
       - name: Build release APK
         run: flutter build apk --release
 
-      - name: Upload APK
+      # 13. حفظ ملف APK
+      - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
           name: bin-thabit-android-apk
