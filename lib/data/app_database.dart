@@ -329,12 +329,54 @@ class AppDatabase {
     if (await rollbackWal.exists()) await rollbackWal.copy('$path-wal');
   }
 
+  Future<void> _preserveDatabaseSetWithoutKey(String path) async {
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    for (final suffix in ['', '-wal', '-shm']) {
+      final source = File('$path$suffix');
+      if (await source.exists()) {
+        final preserved = File('$path.locked-$stamp$suffix');
+        await source.copy(preserved.path);
+      }
+    }
+  }
+
   Future<void> _recoverInterruptedRestore(String path) async {
     final journal = await SecurityService.instance.readDatabaseRestoreJournal();
     if (journal == null) return;
-    final oldPassword = journal['oldPassword']!;
     final newPassword = journal['newPassword']!;
     final target = File(path);
+
+    // A separately authenticated backup can be restored even when the old
+    // SQLCipher key is gone. Keep the old encrypted bytes as a locked copy.
+    if (journal['mode'] == 'without_old_password') {
+      final restore = File('$path.restore');
+      if (!await _isUsableDatabaseSet(path, newPassword)) {
+        if (!await _isUsableDatabaseSet(restore.path, newPassword)) {
+          throw StateError(
+            'استعادة النسخة لم تكتمل، ولا توجد قاعدة صالحة بالمفتاح الجديد. '
+            'لم نحذف قاعدة البيانات القديمة أو ملف النسخة؛ أعد اختيار النسخة الاحتياطية.',
+          );
+        }
+        await _preserveDatabaseSetWithoutKey(path);
+        for (final suffix in ['', '-wal', '-shm']) {
+          final active = File('$path$suffix');
+          if (await active.exists()) await active.delete();
+        }
+        await restore.rename(path);
+      }
+      if (!await _isUsableDatabaseSet(path, newPassword)) {
+        throw StateError('تعذر التحقق من قاعدة البيانات المستعادة؛ احتفظ بالنسخة ولا تحذف الملفات.');
+      }
+      await SecurityService.instance.replaceDatabasePassword(newPassword);
+      await SecurityService.instance.finishDatabaseRestore();
+      if (await restore.exists()) {
+        try { await restore.delete(); } catch (_) { /* stale temp is safe to clean later */ }
+      }
+      if (!await target.exists()) throw StateError('قاعدة البيانات غير موجودة بعد الاستعادة');
+      return;
+    }
+
+    final oldPassword = journal['oldPassword']!;
     final rollback = File('$path.rollback');
 
     // Test copies only, so trying the wrong SQLCipher key never alters the
@@ -357,7 +399,7 @@ class AppDatabase {
     await SecurityService.instance.replaceDatabasePassword(activePassword);
     await SecurityService.instance.finishDatabaseRestore();
     // The active database has been validated. Leftover rollback files are now
-    // stale and can be removed safely.
+    // stale and may be removed safely.
     for (final suffix in ['.rollback', '.rollback-wal', '.rollback-shm', '.restore']) {
       final stale = File('$path$suffix');
       if (await stale.exists()) {
