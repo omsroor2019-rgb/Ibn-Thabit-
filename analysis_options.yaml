@@ -1,0 +1,14 @@
+include: package:flutter_lints/flutter.yaml
+analyzer:
+  exclude:
+    - build/**
+    - .dart_tool/**
+linter:
+  rules:
+    avoid_print: true
+    always_declare_return_types: true
+    avoid_dynamic_calls: true
+    cancel_subscriptions: true
+    close_sinks: true
+    prefer_final_locals: true
+    unawaited_futures: true
