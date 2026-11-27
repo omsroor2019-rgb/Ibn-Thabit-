@@ -104,9 +104,11 @@ class AppDatabase {
           throw StateError('تعذر إيقاف وضع WAL بأمان؛ لم نتابع فتح قاعدة البيانات');
         }
         await db.execute('PRAGMA synchronous = FULL');
-        await db.execute('PRAGMA secure_delete = ON');
+        // Android treats this PRAGMA as a row-producing statement; rawQuery is required.
+        await db.rawQuery('PRAGMA secure_delete = ON');
         await db.execute('PRAGMA temp_store = MEMORY');
-          await db.execute('PRAGMA cipher_memory_security = ON');
+          // SQLCipher may also return a row for this PRAGMA on Android.
+        await db.rawQuery('PRAGMA cipher_memory_security = ON');
         },
         onCreate: (db, version) async {
         await db.execute('''
