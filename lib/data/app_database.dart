@@ -337,43 +337,82 @@ class AppDatabase {
     String notes = '',
   }) async {
     final cleanedName = name.trim();
+    final cleanedPhone = phone.trim();
+    final cleanedAddress = address.trim();
+    final cleanedNotes = notes.trim();
+
     if (cleanedName.isEmpty) throw ArgumentError('الاسم مطلوب');
-    if (cleanedName.length > 120 || phone.trim().length > 32 ||
-        address.trim().length > 240 || notes.trim().length > 1000) {
+    if (cleanedName.length > 120 || cleanedPhone.length > 32 ||
+        cleanedAddress.length > 240 || cleanedNotes.length > 1000) {
       throw ArgumentError('بعض بيانات الحساب أطول من الحد المسموح');
     }
     if (kind != 'customer' && kind != 'supplier') {
       throw ArgumentError('نوع الحساب غير صحيح');
     }
+
     final db = await database;
     return db.transaction((txn) async {
       await _assertWritable();
-      final key = kind == 'customer' ? 'next_customer_no' : 'next_supplier_no';
-      final row = await txn.query('app_meta', where: 'key = ?', whereArgs: [key], limit: 1);
-      if (row.isEmpty) throw StateError('عداد الحسابات غير موجود');
-      final accountNo = int.parse(row.first['value'] as String);
+
+      // Repair auxiliary tables when this installation carries an older
+      // database file. These statements are idempotent and do not erase data.
+      await txn.execute('''
+        CREATE TABLE IF NOT EXISTS app_meta (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        )
+      ''');
+      await txn.execute('''
+        CREATE TABLE IF NOT EXISTS audit_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          entity_type TEXT NOT NULL,
+          entity_id INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          details TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        )
+      ''');
+
+      // The persisted parties table is the source of truth. Deriving the next
+      // number from MAX(account_no) prevents stale/missing counters from
+      // blocking customer or supplier creation after an upgrade/restore.
+      final base = kind == 'customer' ? 100001 : 200001;
+      final rows = await txn.rawQuery(
+        'SELECT COALESCE(MAX(account_no), ?) AS max_no FROM parties WHERE kind = ?',
+        [base - 1, kind],
+      );
+      final maxNo = (rows.first['max_no'] as int?) ?? (base - 1);
+      if (maxNo < base - 1 || maxNo >= 0x7fffffffffffffff) {
+        throw StateError('تعذر توليد رقم حساب آمن؛ تواصل مع الدعم');
+      }
+      final accountNo = maxNo + 1;
       if (kind == 'customer' && accountNo > 199999) {
         throw StateError('اكتمل نطاق أرقام العملاء المحجوز؛ تواصل مع الدعم قبل إضافة حساب جديد');
       }
-      if (accountNo <= 0 || accountNo >= 0x7fffffffffffffff) {
-        throw StateError('تعذر توليد رقم حساب آمن؛ تواصل مع الدعم');
-      }
-      await txn.update('app_meta', {'value': '${accountNo + 1}'}, where: 'key = ?', whereArgs: [key]);
+
+      final now = DateTime.now().toUtc().toIso8601String();
       final id = await txn.insert('parties', {
         'account_no': accountNo,
         'kind': kind,
         'name': cleanedName,
-        'phone': phone.trim(),
-        'address': address.trim(),
-        'notes': notes.trim(),
-        'created_at': DateTime.now().toUtc().toIso8601String(),
+        'phone': cleanedPhone,
+        'address': cleanedAddress,
+        'notes': cleanedNotes,
+        'created_at': now,
       });
+
+      final key = kind == 'customer' ? 'next_customer_no' : 'next_supplier_no';
+      await txn.insert(
+        'app_meta',
+        {'key': key, 'value': '${accountNo + 1}'},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
       await txn.insert('audit_logs', {
         'entity_type': 'party',
         'entity_id': id,
         'action': 'create',
         'details': 'account_no=$accountNo;kind=$kind',
-        'created_at': DateTime.now().toUtc().toIso8601String(),
+        'created_at': now,
       });
       return id;
     });
