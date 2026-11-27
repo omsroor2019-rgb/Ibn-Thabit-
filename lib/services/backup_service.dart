@@ -94,20 +94,20 @@ class BackupService {
     if (_restoreInProgress) throw StateError('هناك عملية استعادة قيد التنفيذ');
     _restoreInProgress = true;
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final picked = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: [backupExtension],
-        withData: true,
-        allowMultiple: false,
       );
-      if (result == null || result.files.isEmpty) return false;
-      final picked = result.files.single;
-      if (picked.size <= 0 || picked.size > _maxBackupBytes * 2) {
+      if (picked == null) return false;
+      final pickedLength = picked.lengthSync() ?? await picked.length();
+      if (pickedLength == null || pickedLength <= 0 || pickedLength > _maxBackupBytes * 2) {
         throw const FormatException('ملف النسخة فارغ أو أكبر من الحد المسموح');
       }
-      final bytes = picked.bytes;
-      if (bytes == null || bytes.isEmpty) throw StateError('تعذر قراءة ملف النسخة');
-      if (bytes.length > _maxBackupBytes * 2) throw const FormatException('ملف النسخة أكبر من الحد المسموح');
+      final bytes = await picked.readAsBytes();
+      if (bytes.isEmpty) throw StateError('تعذر قراءة ملف النسخة');
+      if (bytes.length > _maxBackupBytes * 2) {
+        throw const FormatException('ملف النسخة أكبر من الحد المسموح');
+      }
       final bundleBytes = await _decryptPortableEnvelope(bytes, password);
       final decoded = jsonDecode(utf8.decode(bundleBytes));
       if (decoded is! Map<String, dynamic>) throw const FormatException('بنية النسخة غير صالحة');
