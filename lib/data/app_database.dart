@@ -67,20 +67,48 @@ class AppDatabase {
   Future<Database> _open() async {
     final filePath = await databasePath;
     if (!_restoreSwapInProgress) await _recoverInterruptedRestore(filePath);
-    final password = await SecurityService.instance.getOrCreateDatabasePassword();
-    return openDatabase(
-      filePath,
-      password: password,
-      version: 2,
-      onConfigure: (db) async {
+
+    // Ensure the Android app-private database directory exists and is writable
+    // before invoking the native SQLCipher open call.
+    final parent = Directory(p.dirname(filePath));
+    await parent.create(recursive: true);
+    final probe = File(p.join(parent.path, '.bin_thabit_db_write_probe'));
+    try {
+      await probe.writeAsBytes(const [0x42], flush: true);
+    } finally {
+      if (await probe.exists()) await probe.delete();
+    }
+
+    final databaseFile = File(filePath);
+    final databaseExists = await databaseFile.exists() && await databaseFile.length() > 0;
+    final password = await SecurityService.instance.getOrCreateDatabasePassword(
+      databaseExists: databaseExists,
+    );
+
+    try {
+      return await openDatabase(
+        filePath,
+        password: password,
+        version: 2,
+        onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
-        await db.execute('PRAGMA journal_mode = WAL');
+        // Use SQLite's rollback journal instead of WAL. The bundled SQLCipher
+        // release uses an SQLite baseline older than the fix for the rare
+        // multi-connection WAL-reset corruption race. DELETE mode keeps the
+        // existing WorkManager backup and foreground access on normal locking.
+        final journalModeRows = await db.rawQuery('PRAGMA journal_mode = DELETE');
+        final journalMode = journalModeRows.isEmpty
+            ? ''
+            : journalModeRows.first.values.first.toString().toLowerCase();
+        if (journalMode != 'delete') {
+          throw StateError('تعذر إيقاف وضع WAL بأمان؛ لم نتابع فتح قاعدة البيانات');
+        }
         await db.execute('PRAGMA synchronous = FULL');
         await db.execute('PRAGMA secure_delete = ON');
         await db.execute('PRAGMA temp_store = MEMORY');
-        await db.execute('PRAGMA cipher_memory_security = ON');
-      },
-      onCreate: (db, version) async {
+          await db.execute('PRAGMA cipher_memory_security = ON');
+        },
+        onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE parties (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -236,7 +264,18 @@ class AppDatabase {
           );
         }
       },
-    );
+      );
+    } catch (error, stackTrace) {
+      final dbExists = await databaseFile.exists();
+      final dbLength = dbExists ? await databaseFile.length() : 0;
+      final walFile = File('$filePath-wal');
+      final shmFile = File('$filePath-shm');
+      final walLength = await walFile.exists() ? await walFile.length() : 0;
+      final shmLength = await shmFile.exists() ? await shmFile.length() : 0;
+      final diagnostic = 'DATABASE_OPEN_FAILED; exists=$dbExists; bytes=$dbLength; '
+          'walBytes=$walLength; shmBytes=$shmLength; path=$filePath; cause=$error';
+      Error.throwWithStackTrace(StateError(diagnostic), stackTrace);
+    }
   }
 
   Future<bool> _isUsableDatabaseSet(String sourcePath, String password) async {
@@ -865,10 +904,9 @@ class AppDatabase {
         throw StateError('هناك عملية نسخ أو استعادة أخرى؛ حاول لاحقًا');
       }
       final active = _database ??= await _open();
-      final checkpoint = await active.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
-      if (checkpoint.isNotEmpty && (checkpoint.first['busy'] as int? ?? 0) != 0) {
-        throw StateError('هناك عملية مالية نشطة؛ تعذر إنشاء نسخة متسقة، أعد المحاولة');
-      }
+      // In DELETE journal mode committed transactions are already in the main
+      // database file; closing the sole foreground connection makes the file
+      // safe to snapshot. Do not manually operate on WAL sidecars.
       await active.close();
       _database = null;
       connectionClosed = true;
@@ -889,6 +927,11 @@ class AppDatabase {
 
   Future<bool> checkpoint() async {
     final db = await database;
+    final modeRows = await db.rawQuery('PRAGMA journal_mode');
+    final mode = modeRows.isEmpty
+        ? 'delete'
+        : modeRows.first.values.first.toString().toLowerCase();
+    if (mode != 'wal') return true;
     final result = await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
     return result.isEmpty || (result.first['busy'] as int? ?? 0) == 0;
   }
