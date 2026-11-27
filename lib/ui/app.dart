@@ -1055,6 +1055,7 @@ class _AddPartyPageState extends State<AddPartyPage> {
   final _notes = TextEditingController();
   bool _saving = false;
   String? _saveError;
+  String? _saveErrorDetails;
 
   bool get _isCustomer => widget.kind == 'customer';
   String get _entityName => _isCustomer ? 'العميل' : 'المورد';
@@ -1089,7 +1090,14 @@ class _AddPartyPageState extends State<AddPartyPage> {
     } catch (error, stackTrace) {
       debugPrint('AddPartyPage: failed to create ${widget.kind}: $error');
       debugPrintStack(stackTrace: stackTrace);
-      if (mounted) setState(() => _saveError = partySaveError(error));
+      if (mounted) {
+        setState(() {
+          _saveError = partySaveError(error);
+          // Keep the unabridged exception and stack trace available for support.
+          // The visible message remains short; the user can copy the full details.
+          _saveErrorDetails = '${error.toString()}\n\n$stackTrace';
+        });
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1243,12 +1251,30 @@ class _AddPartyPageState extends State<AddPartyPage> {
                   color: colorScheme.errorContainer,
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Row(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.error_outline_rounded, color: colorScheme.error),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(_saveError!, style: TextStyle(color: colorScheme.onErrorContainer))),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.error_outline_rounded, color: colorScheme.error),
+                        const SizedBox(width: 10),
+                        Expanded(child: SelectableText(_saveError!, style: TextStyle(color: colorScheme.onErrorContainer))),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: TextButton.icon(
+                        onPressed: _saveErrorDetails == null ? null : () async {
+                          await Clipboard.setData(ClipboardData(text: _saveErrorDetails!));
+                          if (!mounted) return;
+                          showMessage(context, 'تم نسخ تفاصيل الخطأ كاملة. الصقها في المحادثة.');
+                        },
+                        icon: const Icon(Icons.copy_rounded, size: 18),
+                        label: const Text('نسخ تفاصيل الخطأ كاملة'),
+                      ),
+                    ),
                   ],
                 ),
               ),
