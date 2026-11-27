@@ -1,7 +1,7 @@
 name: bin_thabit
 description: تطبيق بن ثابت لإدارة الحسابات التجارية والديون بالريال السعودي واليمني.
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.2+3
 environment:
   sdk: '>=3.14.0 <4.0.0'
   flutter: '>=3.50.0'
@@ -40,5 +40,5 @@ flutter_launcher_icons:
   android: "launcher_icon"
   image_path: "assets/icon/app_icon.png"
   min_sdk_android: 24
-  adaptive_icon_background: "#087A3C"
+  adaptive_icon_background: "#176B45"
   adaptive_icon_foreground: "assets/icon/launcher_foreground.png"
