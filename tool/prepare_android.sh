@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Align the Flutter SDK's included Gradle build plugin with the Flutter 3.50 toolchain.
+bash tool/patch_flutter_gradle.sh
+
 if [[ ! -d android ]]; then
   flutter create --platforms=android --org com.binthabit --project-name bin_thabit .
 fi
