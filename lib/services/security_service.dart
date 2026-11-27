@@ -121,16 +121,55 @@ class SecurityService {
     }
   }
 
-  Future<String> getOrCreateDatabasePassword() async {
+  Future<String?> readDatabasePassword() async {
     final stored = await _storage.read(key: _databasePasswordKey);
+    if (stored == null) return null;
+    try {
+      if (base64Decode(stored).length != 32) {
+        throw const FormatException('invalid database key length');
+      }
+    } catch (_) {
+      throw StateError('مفتاح تشفير قاعدة البيانات المحفوظ غير صالح. لم نغيّره حفاظًا على البيانات.');
+    }
+    return stored;
+  }
+
+  Future<String> getOrCreateDatabasePassword({bool databaseExists = false}) async {
+    final stored = await readDatabasePassword();
     if (stored != null) return stored;
+
+    // Never invent a new key for an existing encrypted DB. Doing so would
+    // make the old file permanently unreadable with the newly generated key.
+    if (databaseExists) {
+      throw StateError(
+        'ملف قاعدة البيانات موجود لكن مفتاح التشفير غير موجود في التخزين الآمن. '
+        'أوقفنا إنشاء مفتاح بديل لحماية بياناتك. لا تحذف التطبيق أو ملف قاعدة البيانات؛ '
+        'يلزم استرجاع المفتاح الأصلي أو استعادة نسخة احتياطية مشفرة.',
+      );
+    }
+
     final value = base64Encode(_randomBytes(32));
     await _storage.write(key: _databasePasswordKey, value: value);
+    final confirmed = await readDatabasePassword();
+    if (confirmed != value) {
+      throw StateError('تعذر حفظ مفتاح تشفير قاعدة البيانات في التخزين الآمن.');
+    }
     return value;
   }
 
   Future<void> replaceDatabasePassword(String value) async {
+    try {
+      if (base64Decode(value).length != 32) {
+        throw const FormatException('invalid database key length');
+      }
+    } catch (_) {
+      throw ArgumentError('مفتاح قاعدة البيانات غير صالح');
+    }
     await _storage.write(key: _databasePasswordKey, value: value);
+    final confirmed = await readDatabasePassword();
+    if (confirmed != value) {
+      throw StateError('تعذر التحقق من حفظ مفتاح قاعدة البيانات الجديد.');
+    }
   }
 
 
