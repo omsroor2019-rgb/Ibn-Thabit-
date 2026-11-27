@@ -29,7 +29,10 @@ class BackupService {
     }
     final dbBytes = await AppDatabase.instance.createConsistentSnapshot();
     if (dbBytes.length > _maxBackupBytes) throw StateError('حجم قاعدة البيانات تجاوز الحد المسموح للنسخة');
-    final dbPassword = await SecurityService.instance.getOrCreateDatabasePassword();
+    final dbPassword = await SecurityService.instance.readDatabasePassword();
+    if (dbPassword == null) {
+      throw StateError('مفتاح قاعدة البيانات غير موجود؛ تعذر إنشاء نسخة احتياطية آمنة');
+    }
     final prefs = await SharedPreferences.getInstance();
     final profile = <String, String>{};
     for (final key in ['store_name', 'store_phone', 'store_address', 'store_activity', 'theme_mode']) {
@@ -292,7 +295,9 @@ class BackupService {
     final rollbackShm = File('$path.rollback-shm');
     final wal = File('$path-wal');
     final shm = File('$path-shm');
-    final oldDbPassword = await SecurityService.instance.getOrCreateDatabasePassword();
+    final oldDbPassword = await SecurityService.instance.getOrCreateDatabasePassword(
+      databaseExists: await target.exists() && await target.length() > 0,
+    );
     final prefs = await SharedPreferences.getInstance();
     const profileKeys = ['store_name', 'store_phone', 'store_address', 'store_activity', 'theme_mode'];
     final oldProfile = <String, String>{};
@@ -464,7 +469,10 @@ class BackupService {
   Future<void> createScheduledLocalBackup() async {
     final dbBytes = await AppDatabase.instance.createConsistentSnapshot();
     if (dbBytes.length > _maxBackupBytes) throw StateError('حجم قاعدة البيانات تجاوز الحد المسموح للنسخة');
-    final databasePassword = await SecurityService.instance.getOrCreateDatabasePassword();
+    final databasePassword = await SecurityService.instance.readDatabasePassword();
+    if (databasePassword == null) {
+      throw StateError('مفتاح قاعدة البيانات غير موجود؛ تعذر إنشاء نسخة احتياطية آمنة');
+    }
     final autoKey = await SecurityService.instance.getOrCreateAutoBackupKey();
     final nonce = _randomBytes(12);
     final prefs = await SharedPreferences.getInstance();
