@@ -93,7 +93,7 @@ class SecurityService {
   }
 
   Future<List<int>> _derivePin(String pin, List<int> salt) async {
-    const kdf = Pbkdf2(macAlgorithm: Hmac.sha256(), iterations: 180000, bits: 256);
+    final kdf = Pbkdf2(macAlgorithm: Hmac.sha256(), iterations: 180000, bits: 256);
     final key = await kdf.deriveKey(secretKey: SecretKey(utf8.encode(pin)), nonce: salt);
     return key.extractBytes();
   }
