@@ -29,7 +29,7 @@ class BackupService {
     }
     final dbBytes = await AppDatabase.instance.createConsistentSnapshot();
     if (dbBytes.length > _maxBackupBytes) throw StateError('حجم قاعدة البيانات تجاوز الحد المسموح للنسخة');
-    final dbPassword = await SecurityService.instance.getOrCreateDatabasePassword();
+    final dbPassword = await SecurityService.instance.getOrCreateDatabasePassword(databaseExists: true);
     final prefs = await SharedPreferences.getInstance();
     final profile = <String, String>{};
     for (final key in ['store_name', 'store_phone', 'store_address', 'store_activity', 'theme_mode']) {
@@ -276,7 +276,7 @@ class BackupService {
       throw const FormatException('تعذر فتح قاعدة البيانات؛ تحقق من النسخة وكلمة المرور');
     } finally {
       await candidate?.close();
-      for (final suffix in ['', '-wal', '-shm']) {
+      for (final suffix in ['', '-wal', '-shm', '-journal']) {
         final sidecar = File('$path$suffix');
         if (await sidecar.exists()) await sidecar.delete();
       }
@@ -321,13 +321,13 @@ class BackupService {
       // Preserve the inaccessible original database and all its sidecars.
       // It cannot be rolled back to a usable state without its missing key.
       final stamp = DateTime.now().microsecondsSinceEpoch;
-      for (final suffix in ['', '-wal', '-shm']) {
+      for (final suffix in ['', '-wal', '-shm', '-journal']) {
         final source = File('$path$suffix');
         if (await source.exists()) {
           await source.copy('$path.locked-$stamp$suffix');
         }
       }
-      for (final suffix in ['', '-wal', '-shm']) {
+      for (final suffix in ['', '-wal', '-shm', '-journal']) {
         final active = File('$path$suffix');
         if (await active.exists()) await active.delete();
       }
@@ -388,8 +388,10 @@ class BackupService {
     final rollback = File('$path.rollback');
     final rollbackWal = File('$path.rollback-wal');
     final rollbackShm = File('$path.rollback-shm');
+    final rollbackJournal = File('$path.rollback-journal');
     final wal = File('$path-wal');
     final shm = File('$path-shm');
+    final journal = File('$path-journal');
     final prefs = await SharedPreferences.getInstance();
     const profileKeys = ['store_name', 'store_phone', 'store_address', 'store_activity', 'theme_mode'];
     final oldProfile = <String, String>{};
@@ -400,6 +402,7 @@ class BackupService {
 
     var hadTarget = false;
     var hadWal = false;
+    var hadJournal = false;
     var backupsReady = false;
     var replacementStarted = false;
     var completed = false;
@@ -438,13 +441,15 @@ class BackupService {
 
       hadTarget = await target.exists();
       hadWal = await wal.exists();
+      hadJournal = await journal.exists();
 
-      for (final file in [temp, rollback, rollbackWal, rollbackShm]) {
+      for (final file in [temp, rollback, rollbackWal, rollbackShm, rollbackJournal]) {
         if (await file.exists()) await file.delete();
       }
       await temp.writeAsBytes(dbBytes, flush: true);
       if (hadTarget) await target.copy(rollback.path);
       if (hadWal) await wal.copy(rollbackWal.path);
+      if (hadJournal) await journal.copy(rollbackJournal.path);
       // Do not preserve -shm: it is transient shared-memory state and must be rebuilt.
       backupsReady = hadTarget;
       if (!backupsReady) throw StateError('تعذر إنشاء نسخة رجوع من قاعدة البيانات الحالية');
@@ -455,6 +460,7 @@ class BackupService {
       replacementStarted = true;
       if (hadWal && await wal.exists()) await wal.delete();
       if (await shm.exists()) await shm.delete();
+      if (hadJournal && await journal.exists()) await journal.delete();
       if (hadTarget && await target.exists()) await target.delete();
       await temp.rename(path);
 
@@ -480,11 +486,12 @@ class BackupService {
         await AppDatabase.instance.close();
         if (replacementStarted && backupsReady) {
           // Restore the original encrypted database and its SQLite sidecars.
-          for (final file in [target, wal, shm]) {
+          for (final file in [target, wal, shm, journal]) {
             if (await file.exists()) await file.delete();
           }
           await rollback.copy(path);
           if (hadWal && await rollbackWal.exists()) await rollbackWal.copy('$path-wal');
+          if (hadJournal && await rollbackJournal.exists()) await rollbackJournal.copy('$path-journal');
           // SQLite recreates the shared-memory file from the main DB/WAL.
         }
         await SecurityService.instance.replaceDatabasePassword(oldDbPassword);
@@ -511,7 +518,7 @@ class BackupService {
         try { await operationLock.delete(); } catch (_) { /* stale lock recovery is available */ }
       }
       if (completed || rollbackCompleted) {
-        for (final file in [rollback, rollbackWal, rollbackShm]) {
+        for (final file in [rollback, rollbackWal, rollbackShm, rollbackJournal]) {
           try { if (await file.exists()) await file.delete(); } catch (_) { /* stale rollback files are safe to remove later */ }
         }
       }
@@ -561,7 +568,7 @@ class BackupService {
   Future<void> createScheduledLocalBackup() async {
     final dbBytes = await AppDatabase.instance.createConsistentSnapshot();
     if (dbBytes.length > _maxBackupBytes) throw StateError('حجم قاعدة البيانات تجاوز الحد المسموح للنسخة');
-    final databasePassword = await SecurityService.instance.getOrCreateDatabasePassword();
+    final databasePassword = await SecurityService.instance.getOrCreateDatabasePassword(databaseExists: true);
     final autoKey = await SecurityService.instance.getOrCreateAutoBackupKey();
     final nonce = _randomBytes(12);
     final prefs = await SharedPreferences.getInstance();
