@@ -25,13 +25,28 @@ if 'android:usesCleartextTraffic=' not in text:
 else:
     import re
     text = re.sub(r'android:usesCleartextTraffic="[^"]*"', 'android:usesCleartextTraffic="false"', text, count=1)
-# Prevent Android cloud restore from copying encrypted-storage preferences without their Keystore keys.
-if 'android:allowBackup=' not in text:
-    text = text.replace('<application', '<application android:allowBackup="false"', 1)
-else:
-    import re
-    text = re.sub(r'android:allowBackup="[^"]*"', 'android:allowBackup="false"', text, count=1)
+# Prevent Android from restoring SQLCipher files and Keystore-backed preferences separately.
+import re
+for attribute, value in {
+    'android:allowBackup': 'false',
+    'android:fullBackupContent': '@xml/bin_thabit_backup_rules',
+    'android:dataExtractionRules': '@xml/bin_thabit_data_extraction_rules',
+}.items():
+    pattern = rf'{re.escape(attribute)}="[^"]*"'
+    if re.search(pattern, text):
+        text = re.sub(pattern, f'{attribute}="{value}"', text, count=1)
+    else:
+        text = text.replace('<application', f'<application {attribute}="{value}"', 1)
 manifest.write_text(text, encoding='utf-8')
+
+# Keep explicit exclusion rules for legacy Android versions and Android 12+ D2D transfers.
+resource_dir = Path('android/app/src/main/res/xml')
+resource_dir.mkdir(parents=True, exist_ok=True)
+for source, target in [
+    (Path('tool/android/backup_rules.xml'), resource_dir / 'bin_thabit_backup_rules.xml'),
+    (Path('tool/android/data_extraction_rules.xml'), resource_dir / 'bin_thabit_data_extraction_rules.xml'),
+]:
+    target.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
 
 activity = Path('android/app/src/main/kotlin/com/binthabit/bin_thabit/MainActivity.kt')
 if activity.exists():
