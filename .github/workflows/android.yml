@@ -10,39 +10,72 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: bin-thabit-android-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-and-build:
-    name: Analyze, test, and build APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
+    timeout-minutes: 60
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Flutter
+      - name: Setup Flutter stable
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.50.1'
           cache: true
+
+      # The Flutter Gradle plugin is an included build. Its plugin resolution
+      # was searching only Gradle Plugin Portal for Kotlin artifacts. Add
+      # Maven Central BEFORE settings scripts and plugin blocks are evaluated.
+      - name: Configure Gradle plugin repositories
+        shell: bash
+        run: |
+          set -euo pipefail
+          GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$GRADLE_USER_HOME/init.d"
+          cat > "$GRADLE_USER_HOME/init.d/00-flutter-plugin-repositories.gradle" <<'GRADLE'
+          gradle.beforeSettings { settings ->
+              settings.pluginManagement.repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          GRADLE
+          echo "Added Google Maven Central and Gradle Plugin Portal to plugin resolution for all builds, including Flutter's included Gradle build."
 
       - name: Generate Android platform files
         run: bash tool/prepare_android.sh
 
-      - name: Install Flutter dependencies
+      - name: Verify SQLite schema and financial constraints
+        run: python3 tool/verify_schema.py
+
+      - name: Install dependencies
         run: flutter pub get
 
-      - name: Generate launcher icons
+      - name: Generate application launcher icon
         run: dart run flutter_launcher_icons
 
+      - name: Show Android build tool versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd android
+          chmod +x gradlew
+          ./gradlew --version
+
       - name: Analyze Dart code
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        run: flutter analyze
 
       - name: Run tests
         run: flutter test
@@ -50,7 +83,7 @@ jobs:
       - name: Build release APK
         run: flutter build apk --release
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: bin-thabit-android-apk
