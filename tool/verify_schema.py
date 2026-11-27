@@ -150,6 +150,59 @@ def main() -> None:
     print("PASS: SAR and YER ledger balances stay separate", balances)
     print("PASS: SQLite integrity_check and foreign_key_check")
     print("NOTE: system SQLite smoke test only; native SQLCipher and Flutter runtime remain to be tested in CI/device")
+
+    # Regression test for party creation when upgrade-era helper tables are absent.
+    create_db = sqlite3.connect(":memory:")
+    create_db.execute("PRAGMA foreign_keys = ON")
+    for statement in statements:
+        create_db.executescript(statement)
+    create_db.execute("DROP TABLE app_meta")
+    create_db.execute("DROP TABLE audit_logs")
+
+    def create_party_resilient(kind: str, name: str) -> tuple[int, int]:
+        base = 100001 if kind == "customer" else 200001
+        with create_db:
+            create_db.execute(
+                "CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            create_db.execute(
+                "CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT NOT NULL, entity_id INTEGER NOT NULL, action TEXT NOT NULL, details TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)"
+            )
+            max_no = create_db.execute(
+                "SELECT COALESCE(MAX(account_no), ?) FROM parties WHERE kind = ?",
+                (base - 1, kind),
+            ).fetchone()[0]
+            account_no = int(max_no) + 1
+            if kind == "customer" and account_no > 199999:
+                raise AssertionError("Customer account range exhausted unexpectedly")
+            cursor = create_db.execute(
+                "INSERT INTO parties(account_no,kind,name,created_at) VALUES (?,?,?,?)",
+                (account_no, kind, name, timestamp),
+            )
+            party_id = int(cursor.lastrowid)
+            key = "next_customer_no" if kind == "customer" else "next_supplier_no"
+            create_db.execute(
+                "INSERT OR REPLACE INTO app_meta(key,value) VALUES (?,?)",
+                (key, str(account_no + 1)),
+            )
+            create_db.execute(
+                "INSERT INTO audit_logs(entity_type,entity_id,action,details,created_at) VALUES (?,?,?,?,?)",
+                ("party", party_id, "create", f"account_no={account_no};kind={kind}", timestamp),
+            )
+            return party_id, account_no
+
+    c1 = create_party_resilient("customer", "عميل بعد التحديث")
+    s1 = create_party_resilient("supplier", "مورد بعد التحديث")
+    c2 = create_party_resilient("customer", "عميل ثانٍ")
+    require(c1[1] == 100001 and c2[1] == 100002, f"Wrong customer sequence: {c1}, {c2}")
+    require(s1[1] == 200001, f"Wrong supplier sequence: {s1}")
+    require(create_db.execute("SELECT COUNT(*) FROM audit_logs").fetchone()[0] == 3,
+            "Party audit entries were not written")
+    require(create_db.execute("PRAGMA integrity_check").fetchone()[0] == "ok",
+            "Party creation regression integrity check failed")
+    create_db.close()
+    print("PASS: customer/supplier creation repairs missing auxiliary tables and allocates unique sequential account numbers")
+
     connection.close()
 
 
