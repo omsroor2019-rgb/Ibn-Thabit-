@@ -85,6 +85,8 @@ class AppDatabase {
 
   Future<Database> _open() async {
     final filePath = await databasePath;
+    // Keep the database handle in this method scope for the open-error handler.
+    final databaseFile = File(filePath);
     if (!_restoreSwapInProgress) await _recoverInterruptedRestore(filePath);
 
     // Ensure the Android app-private database directory exists and is writable
