@@ -5,6 +5,12 @@ if [[ ! -d android ]]; then
   flutter create --platforms=android --org com.binthabit --project-name bin_thabit .
 fi
 
+# Flutter 3.50's generated template test is for the sample MyApp and may import
+# material_ui. This app has its own targeted tests; discard only that generated sample.
+if [[ -f test/widget_test.dart ]] && grep -q 'MyApp' test/widget_test.dart; then
+  rm -f test/widget_test.dart
+fi
+
 python3 - <<'PY'
 from pathlib import Path
 manifest = Path('android/app/src/main/AndroidManifest.xml')
