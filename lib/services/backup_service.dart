@@ -29,10 +29,7 @@ class BackupService {
     }
     final dbBytes = await AppDatabase.instance.createConsistentSnapshot();
     if (dbBytes.length > _maxBackupBytes) throw StateError('حجم قاعدة البيانات تجاوز الحد المسموح للنسخة');
-    final dbPassword = await SecurityService.instance.readDatabasePassword();
-    if (dbPassword == null) {
-      throw StateError('مفتاح قاعدة البيانات غير موجود؛ تعذر إنشاء نسخة احتياطية آمنة');
-    }
+    final dbPassword = await SecurityService.instance.getOrCreateDatabasePassword();
     final prefs = await SharedPreferences.getInstance();
     final profile = <String, String>{};
     for (final key in ['store_name', 'store_phone', 'store_address', 'store_activity', 'theme_mode']) {
@@ -286,7 +283,105 @@ class BackupService {
     }
   }
 
+  Future<void> _replaceDatabaseWithoutOldKey(
+    List<int> dbBytes,
+    String newDbPassword,
+    Map<String, dynamic> profile,
+  ) async {
+    final path = await AppDatabase.instance.databasePath;
+    final temp = File('$path.restore');
+    final operationLock = File('$path.operation.lock');
+    final prefs = await SharedPreferences.getInstance();
+    const profileKeys = ['store_name', 'store_phone', 'store_address', 'store_activity', 'theme_mode'];
+
+    var lockCreated = false;
+    var restoreSwapMarked = false;
+    var journalStarted = false;
+    try {
+      if (await operationLock.exists()) {
+        final age = DateTime.now().difference((await operationLock.stat()).modified);
+        if (age > const Duration(minutes: 30)) {
+          try { await operationLock.delete(); } catch (_) { /* another operation may own it */ }
+        }
+      }
+      await operationLock.create(exclusive: true);
+      lockCreated = true;
+      AppDatabase.instance.beginRestoreSwap();
+      restoreSwapMarked = true;
+      await AppDatabase.instance.close();
+
+      // Keep the incoming file beside the active database until the recovery
+      // journal is durable. The caller has already authenticated and checked
+      // the backup database with its own SQLCipher password.
+      if (await temp.exists()) await temp.delete();
+      await temp.writeAsBytes(dbBytes, flush: true);
+      await SecurityService.instance.beginDatabaseRestoreWithoutOldPassword(newDbPassword);
+      journalStarted = true;
+
+      // Preserve the inaccessible original database and all its sidecars.
+      // It cannot be rolled back to a usable state without its missing key.
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      for (final suffix in ['', '-wal', '-shm']) {
+        final source = File('$path$suffix');
+        if (await source.exists()) {
+          await source.copy('$path.locked-$stamp$suffix');
+        }
+      }
+      for (final suffix in ['', '-wal', '-shm']) {
+        final active = File('$path$suffix');
+        if (await active.exists()) await active.delete();
+      }
+      await temp.rename(path);
+
+      // The journal lets startup finish the operation if the process stops
+      // between installing the backup and saving its new database key.
+      await SecurityService.instance.replaceDatabasePassword(newDbPassword);
+      await AppDatabase.instance.reopen();
+      final db = await AppDatabase.instance.database;
+      final integrity = await db.rawQuery('PRAGMA integrity_check');
+      final status = integrity.isEmpty ? '' : integrity.first.values.first.toString().toLowerCase();
+      if (status != 'ok') throw StateError('قاعدة البيانات المستعادة لم تجتز فحص السلامة');
+      await db.rawQuery('SELECT COUNT(*) FROM parties');
+
+      for (final key in profileKeys) {
+        if (profile.containsKey(key)) {
+          await prefs.setString(key, profile[key]!);
+        } else {
+          await prefs.remove(key);
+        }
+      }
+      await SecurityService.instance.finishDatabaseRestore();
+      journalStarted = false;
+    } catch (error) {
+      if (journalStarted) {
+        // Keep the journal, the .restore file (if present), and the preserved
+        // old database. Recovery will validate the incoming file on next open.
+        throw StateError(
+          'تعذر إكمال استعادة النسخة الآن. احتفظ بملف النسخة ولا تحذف بيانات التطبيق؛ '
+          'سيحاول التطبيق إكمال الاستعادة الآمنة عند فتحه مرة أخرى. السبب: $error',
+        );
+      }
+      rethrow;
+    } finally {
+      if (!journalStarted && await temp.exists()) {
+        try { await temp.delete(); } catch (_) { /* cleanup can be retried */ }
+      }
+      if (restoreSwapMarked) AppDatabase.instance.endRestoreSwap();
+      if (lockCreated && await operationLock.exists()) {
+        try { await operationLock.delete(); } catch (_) { /* stale lock recovery remains available */ }
+      }
+    }
+  }
+
   Future<void> _replaceDatabase(List<int> dbBytes, String newDbPassword, Map<String, dynamic> profile) async {
+    // A decrypted, validated backup carries its own SQLCipher key. If the
+    // previous key is missing, restore without asking for the unavailable key.
+    final oldDbPassword = await SecurityService.instance.readDatabasePassword();
+    if (oldDbPassword == null) {
+      await _replaceDatabaseWithoutOldKey(dbBytes, newDbPassword, profile);
+      return;
+    }
+
     final path = await AppDatabase.instance.databasePath;
     final target = File(path);
     final temp = File('$path.restore');
@@ -295,9 +390,6 @@ class BackupService {
     final rollbackShm = File('$path.rollback-shm');
     final wal = File('$path-wal');
     final shm = File('$path-shm');
-    final oldDbPassword = await SecurityService.instance.getOrCreateDatabasePassword(
-      databaseExists: await target.exists() && await target.length() > 0,
-    );
     final prefs = await SharedPreferences.getInstance();
     const profileKeys = ['store_name', 'store_phone', 'store_address', 'store_activity', 'theme_mode'];
     final oldProfile = <String, String>{};
@@ -469,10 +561,7 @@ class BackupService {
   Future<void> createScheduledLocalBackup() async {
     final dbBytes = await AppDatabase.instance.createConsistentSnapshot();
     if (dbBytes.length > _maxBackupBytes) throw StateError('حجم قاعدة البيانات تجاوز الحد المسموح للنسخة');
-    final databasePassword = await SecurityService.instance.readDatabasePassword();
-    if (databasePassword == null) {
-      throw StateError('مفتاح قاعدة البيانات غير موجود؛ تعذر إنشاء نسخة احتياطية آمنة');
-    }
+    final databasePassword = await SecurityService.instance.getOrCreateDatabasePassword();
     final autoKey = await SecurityService.instance.getOrCreateAutoBackupKey();
     final nonce = _randomBytes(12);
     final prefs = await SharedPreferences.getInstance();
