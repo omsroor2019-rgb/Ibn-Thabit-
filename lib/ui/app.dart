@@ -1089,7 +1089,7 @@ class _AddPartyPageState extends State<AddPartyPage> {
     } catch (error, stackTrace) {
       debugPrint('AddPartyPage: failed to create ${widget.kind}: $error');
       debugPrintStack(stackTrace: stackTrace);
-      if (mounted) setState(() => _saveError = userError(error));
+      if (mounted) setState(() => _saveError = partySaveError(error));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -2241,6 +2241,24 @@ class ErrorTile extends StatelessWidget {
 }
 
 void showMessage(BuildContext context, String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+String partySaveError(Object error) {
+  final details = error.toString();
+  if (details.contains('database is locked') || details.contains('database table is locked')) {
+    return 'قاعدة البيانات مشغولة الآن. انتظر قليلًا ثم حاول مرة أخرى.';
+  }
+  if (details.contains('UNIQUE constraint failed: parties.account_no')) {
+    return 'حدث تعارض في رقم الحساب. أعد المحاولة؛ سيُعاد احتساب الرقم تلقائيًا.';
+  }
+  if (details.contains('no such table: parties')) {
+    return 'جدول الحسابات غير موجود في قاعدة البيانات. لا تمسح بيانات التطبيق؛ أرسل تقرير الخطأ للدعم.';
+  }
+  if (details.contains('operation.lock') || details.contains('يتم تجهيز نسخة')) {
+    return 'هناك عملية نسخ احتياطي أو استعادة تعمل الآن. انتظر قليلًا ثم حاول.';
+  }
+  final technicalDetails = details.length > 220 ? '${details.substring(0, 220)}…' : details;
+  return 'لم يتم حفظ الحساب. سبب الخطأ: $technicalDetails';
+}
+
 String userError(Object error) {
   final text = error.toString();
   if (text.contains('no such table: app_meta')) return 'قاعدة بيانات إصدار سابق. حدّث التطبيق إلى النسخة الجديدة ثم افتحه مجددًا.';
