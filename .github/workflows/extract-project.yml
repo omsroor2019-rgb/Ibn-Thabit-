@@ -1,7 +1,6 @@
 name: Extract Bin Thabit Flutter project
 
 on:
-  # Runs when the ZIP is uploaded, or when this workflow file is first added/fixed.
   push:
     branches:
       - main
@@ -9,7 +8,6 @@ on:
       - 'bin_thabit_reviewed.zip'
       - 'bin_thabit_flutter_source.zip'
       - '.github/workflows/extract-project.yml'
-  # Also allows a manual run from the Actions tab.
   workflow_dispatch:
 
 permissions:
@@ -31,17 +29,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Find and safely extract Flutter project
+      - name: Safely extract Flutter project
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ -f "bin_thabit_reviewed.zip" ]]; then
+          if [[ -f bin_thabit_reviewed.zip ]]; then
             ARCHIVE="bin_thabit_reviewed.zip"
-          elif [[ -f "bin_thabit_flutter_source.zip" ]]; then
+          elif [[ -f bin_thabit_flutter_source.zip ]]; then
             ARCHIVE="bin_thabit_flutter_source.zip"
           else
-            echo "ERROR: Upload bin_thabit_reviewed.zip to the repository root first." >&2
+            echo "ERROR: No supported project ZIP found in repository root." >&2
             exit 1
           fi
 
@@ -56,75 +54,68 @@ jobs:
 
           archive = pathlib.Path(sys.argv[1])
           destination = pathlib.Path(sys.argv[2]).resolve()
-          MAX_FILES = 2500
-          MAX_UNCOMPRESSED = 250 * 1024 * 1024
+          max_files = 2500
+          max_uncompressed = 250 * 1024 * 1024
 
           with zipfile.ZipFile(archive) as zf:
               entries = zf.infolist()
-              if len(entries) > MAX_FILES:
-                  raise SystemExit(f"Archive contains too many entries: {len(entries)}")
+              if len(entries) > max_files:
+                  raise SystemExit(f"Too many ZIP entries: {len(entries)}")
 
               total_size = 0
-              normalized = []
+              paths = []
               for info in entries:
                   name = info.filename.replace('\\', '/')
                   path = pathlib.PurePosixPath(name)
                   if path.is_absolute() or '..' in path.parts or not path.parts:
-                      raise SystemExit(f"Unsafe archive path: {info.filename}")
+                      raise SystemExit(f"Unsafe ZIP path: {info.filename}")
                   if path.parts[0] == '.git':
-                      raise SystemExit("Archive must not contain a .git directory")
-                  unix_mode = info.external_attr >> 16
-                  if stat.S_ISLNK(unix_mode):
-                      raise SystemExit(f"Symlinks are not allowed: {info.filename}")
+                      raise SystemExit("ZIP must not contain a .git directory")
+                  mode = info.external_attr >> 16
+                  if stat.S_ISLNK(mode):
+                      raise SystemExit(f"Symlink not allowed: {info.filename}")
                   total_size += info.file_size
-                  if total_size > MAX_UNCOMPRESSED:
-                      raise SystemExit("Archive uncompressed size exceeds 250 MiB")
-                  normalized.append((info, path))
+                  if total_size > max_uncompressed:
+                      raise SystemExit("ZIP exceeds 250 MiB uncompressed limit")
+                  paths.append(path)
 
-              # Locate the Flutter project root by pubspec.yaml, so both
-              # bin_thabit/pubspec.yaml and a ZIP-root pubspec.yaml are supported.
-              roots = {str(path.parent) for info, path in normalized
-                       if path.name == 'pubspec.yaml'}
+              roots = {str(p.parent) for p in paths if p.name == 'pubspec.yaml'}
               if len(roots) != 1:
-                  raise SystemExit(
-                      f"Expected exactly one Flutter pubspec.yaml; found: {sorted(roots)}"
-                  )
-              project_root = next(iter(roots))
+                  raise SystemExit(f"Expected exactly one pubspec.yaml, found: {sorted(roots)}")
 
-              for info, path in normalized:
-                  if str(path) == '.':
-                      continue
+              project_root = next(iter(roots))
+              for path in paths:
                   target = (destination / pathlib.Path(*path.parts)).resolve()
                   if destination != target and destination not in target.parents:
-                      raise SystemExit(f"Archive path escapes extraction directory: {info.filename}")
+                      raise SystemExit(f"ZIP path escapes destination: {path}")
 
               zf.extractall(destination)
 
           project = destination if project_root == '.' else destination / project_root
-          required = [project / 'pubspec.yaml', project / 'lib' / 'main.dart']
-          missing = [str(p.relative_to(destination)) for p in required if not p.is_file()]
-          if missing:
-              raise SystemExit(f"Not a valid Flutter project; missing: {', '.join(missing)}")
+          for required in (project / 'pubspec.yaml', project / 'lib' / 'main.dart'):
+              if not required.is_file():
+                  raise SystemExit(f"Missing required Flutter file: {required}")
 
-          print(f"Flutter project found at: {project.relative_to(destination)}")
+          print(f"Flutter project located at: {project}")
           PY
 
           PROJECT_ROOT="$(find "$TEMP_DIR" -name pubspec.yaml -type f -print -quit | xargs dirname)"
           test -f "$PROJECT_ROOT/lib/main.dart"
 
-          # Copy project files to the repository root while preserving this
-          # extraction workflow so it cannot overwrite itself.
+          # IMPORTANT: Do not copy .github/workflows from the ZIP.
+          # The token used by this workflow can push source files but cannot
+          # create/update workflow files. Add android.yml once manually in GitHub UI.
           rsync -a \
-            --exclude='.git' \
-            --exclude='.github/workflows/extract-project.yml' \
+            --exclude='.git/' \
+            --exclude='.github/' \
             "$PROJECT_ROOT/" ./
 
           test -f pubspec.yaml
           test -f lib/main.dart
           rm -f "$ARCHIVE"
-          echo "Project files extracted successfully."
+          echo "Flutter source files extracted. GitHub workflow files were intentionally excluded."
 
-      - name: Commit extracted project files
+      - name: Commit extracted source files
         shell: bash
         run: |
           set -euo pipefail
@@ -137,13 +128,24 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Extract Bin Thabit Flutter project"
+          # Guard: never push a change to a workflow file with GITHUB_TOKEN.
+          if ! git diff --cached --name-only | grep -qv '^\.github/workflows/'; then
+            echo "No non-workflow source changes were staged; stopping safely."
+            exit 1
+          fi
+          if git diff --cached --name-only | grep -q '^\.github/workflows/'; then
+            echo "Refusing to push workflow-file changes with the default token." >&2
+            exit 1
+          fi
+
+          git commit -m "Extract Bin Thabit Flutter source"
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
-      - name: Show extracted project structure
+      - name: Verify extracted source layout
         shell: bash
         run: |
-          echo "Project root files:"
-          ls -la
-          echo "Flutter entry point: lib/main.dart"
-          echo "Flutter manifest: pubspec.yaml"
+          set -euo pipefail
+          test -f pubspec.yaml
+          test -f lib/main.dart
+          test -d android || echo "Android platform folder will be generated by the Android build workflow."
+          echo "Flutter project files are present at repository root."
