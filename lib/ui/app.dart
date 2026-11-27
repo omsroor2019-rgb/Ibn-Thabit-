@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -210,7 +211,7 @@ class _BinThabitAppState extends State<BinThabitApp> {
         supportedLocales: const [Locale('ar'), Locale('en')],
         localizationsDelegates: GlobalMaterialLocalizations.delegates,
         builder: (context, child) => Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: ui.TextDirection.rtl,
           child: AppLifecycleShield(
             controller: _lockController,
             child: child ?? const SizedBox.shrink(),
@@ -479,7 +480,7 @@ class _MainShellState extends State<MainShell> {
       ReportsPage(key: ValueKey('reports-$_reportsRevision')),
       SettingsPage(themeController: widget.themeController, lockController: widget.lockController),
     ];
-    return Directionality(textDirection: TextDirection.rtl, child: Scaffold(
+    return Directionality(textDirection: ui.TextDirection.rtl, child: Scaffold(
       body: IndexedStack(index: _index, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
