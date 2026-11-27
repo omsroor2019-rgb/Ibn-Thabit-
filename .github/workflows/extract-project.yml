@@ -1,66 +1,149 @@
-name: Extract Bin Thabit project archive
+name: Extract Bin Thabit Flutter project
 
 on:
-  workflow_dispatch:
+  # Runs when the ZIP is uploaded, or when this workflow file is first added/fixed.
   push:
+    branches:
+      - main
     paths:
       - 'bin_thabit_reviewed.zip'
       - 'bin_thabit_flutter_source.zip'
+      - '.github/workflows/extract-project.yml'
+  # Also allows a manual run from the Actions tab.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: bin-thabit-extract-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   extract:
+    name: Extract project files into repository root
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      - name: Find and safely extract project archive
+      - name: Find and safely extract Flutter project
         shell: bash
         run: |
           set -euo pipefail
-          archive=''
-          if [[ -f bin_thabit_reviewed.zip ]]; then
-            archive='bin_thabit_reviewed.zip'
-          elif [[ -f bin_thabit_flutter_source.zip ]]; then
-            archive='bin_thabit_flutter_source.zip'
+
+          if [[ -f "bin_thabit_reviewed.zip" ]]; then
+            ARCHIVE="bin_thabit_reviewed.zip"
+          elif [[ -f "bin_thabit_flutter_source.zip" ]]; then
+            ARCHIVE="bin_thabit_flutter_source.zip"
           else
-            echo 'No supported Bin Thabit ZIP found at repository root.' >&2
+            echo "ERROR: Upload bin_thabit_reviewed.zip to the repository root first." >&2
             exit 1
           fi
 
-          mkdir -p .extract_tmp
-          python3 - "$archive" <<'PY'
-          import pathlib, sys, zipfile
+          TEMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TEMP_DIR"' EXIT
+
+          python3 - "$ARCHIVE" "$TEMP_DIR" <<'PY'
+          import pathlib
+          import stat
+          import sys
+          import zipfile
+
           archive = pathlib.Path(sys.argv[1])
-          root = pathlib.Path('.extract_tmp').resolve()
-          with zipfile.ZipFile(archive) as z:
-              for info in z.infolist():
-                  target = (root / info.filename).resolve()
-                  if target != root and root not in target.parents:
-                      raise SystemExit(f'Unsafe ZIP path: {info.filename}')
-              z.extractall(root)
+          destination = pathlib.Path(sys.argv[2]).resolve()
+          MAX_FILES = 2500
+          MAX_UNCOMPRESSED = 250 * 1024 * 1024
+
+          with zipfile.ZipFile(archive) as zf:
+              entries = zf.infolist()
+              if len(entries) > MAX_FILES:
+                  raise SystemExit(f"Archive contains too many entries: {len(entries)}")
+
+              total_size = 0
+              normalized = []
+              for info in entries:
+                  name = info.filename.replace('\\', '/')
+                  path = pathlib.PurePosixPath(name)
+                  if path.is_absolute() or '..' in path.parts or not path.parts:
+                      raise SystemExit(f"Unsafe archive path: {info.filename}")
+                  if path.parts[0] == '.git':
+                      raise SystemExit("Archive must not contain a .git directory")
+                  unix_mode = info.external_attr >> 16
+                  if stat.S_ISLNK(unix_mode):
+                      raise SystemExit(f"Symlinks are not allowed: {info.filename}")
+                  total_size += info.file_size
+                  if total_size > MAX_UNCOMPRESSED:
+                      raise SystemExit("Archive uncompressed size exceeds 250 MiB")
+                  normalized.append((info, path))
+
+              # Locate the Flutter project root by pubspec.yaml, so both
+              # bin_thabit/pubspec.yaml and a ZIP-root pubspec.yaml are supported.
+              roots = {str(path.parent) for info, path in normalized
+                       if path.name == 'pubspec.yaml'}
+              if len(roots) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one Flutter pubspec.yaml; found: {sorted(roots)}"
+                  )
+              project_root = next(iter(roots))
+
+              for info, path in normalized:
+                  if str(path) == '.':
+                      continue
+                  target = (destination / pathlib.Path(*path.parts)).resolve()
+                  if destination != target and destination not in target.parents:
+                      raise SystemExit(f"Archive path escapes extraction directory: {info.filename}")
+
+              zf.extractall(destination)
+
+          project = destination if project_root == '.' else destination / project_root
+          required = [project / 'pubspec.yaml', project / 'lib' / 'main.dart']
+          missing = [str(p.relative_to(destination)) for p in required if not p.is_file()]
+          if missing:
+              raise SystemExit(f"Not a valid Flutter project; missing: {', '.join(missing)}")
+
+          print(f"Flutter project found at: {project.relative_to(destination)}")
           PY
 
-          # The supplied archive contains a single top-level bin_thabit/ folder.
-          src='.extract_tmp/bin_thabit'
-          test -d "$src"
-          cp -a "$src"/. .
-          rm -rf .extract_tmp "$archive"
+          PROJECT_ROOT="$(find "$TEMP_DIR" -name pubspec.yaml -type f -print -quit | xargs dirname)"
+          test -f "$PROJECT_ROOT/lib/main.dart"
+
+          # Copy project files to the repository root while preserving this
+          # extraction workflow so it cannot overwrite itself.
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github/workflows/extract-project.yml' \
+            "$PROJECT_ROOT/" ./
+
+          test -f pubspec.yaml
+          test -f lib/main.dart
+          rm -f "$ARCHIVE"
+          echo "Project files extracted successfully."
 
       - name: Commit extracted project files
+        shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
+
           if git diff --cached --quiet; then
-            echo 'No extracted changes to commit.'
-          else
-            git commit -m 'Extract Bin Thabit Flutter project'
-            git push
+            echo "No changes to commit."
+            exit 0
           fi
+
+          git commit -m "Extract Bin Thabit Flutter project"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Show extracted project structure
+        shell: bash
+        run: |
+          echo "Project root files:"
+          ls -la
+          echo "Flutter entry point: lib/main.dart"
+          echo "Flutter manifest: pubspec.yaml"
