@@ -382,7 +382,295 @@ class _AppGateState extends State<AppGate> {
       widget.lockController.markSessionActive();
       setState(() => _unlocked = true);
     });
-    return MainShell(themeController: widget.themeController, lockController: widget.lockController);
+    return DatabaseStartupGate(
+      themeController: widget.themeController,
+      lockController: widget.lockController,
+    );
+  }
+}
+
+/// Opens and validates the encrypted database before the user enters the app.
+/// A missing key is handled explicitly rather than being discovered only when
+/// the user tries to add the first customer or supplier.
+class DatabaseStartupGate extends StatefulWidget {
+  const DatabaseStartupGate({
+    super.key,
+    required this.themeController,
+    required this.lockController,
+  });
+
+  final ThemeController themeController;
+  final AppLockController lockController;
+
+  @override
+  State<DatabaseStartupGate> createState() => _DatabaseStartupGateState();
+}
+
+class _DatabaseStartupGateState extends State<DatabaseStartupGate> {
+  bool _checking = true;
+  bool _ready = false;
+  DatabaseKeyMissingException? _missingKey;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeDatabase();
+  }
+
+  Future<void> _initializeDatabase() async {
+    if (mounted) {
+      setState(() {
+        _checking = true;
+        _ready = false;
+        _missingKey = null;
+        _error = null;
+      });
+    }
+    try {
+      await AppDatabase.instance.database;
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _ready = true;
+      });
+    } on DatabaseKeyMissingException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _missingKey = error;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _error = error;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_ready) {
+      return MainShell(
+        themeController: widget.themeController,
+        lockController: widget.lockController,
+      );
+    }
+    if (_checking) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_missingKey != null) {
+      return DatabaseRecoveryPage(onRecovered: _initializeDatabase);
+    }
+    return Scaffold(
+      appBar: AppBar(title: const Text('فحص قاعدة البيانات')),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.storage_rounded, size: 54, color: dangerRed),
+                  const SizedBox(height: 16),
+                  Text(
+                    'تعذر فتح قاعدة البيانات',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _error?.toString() ?? 'حدث خطأ غير معروف أثناء فتح قاعدة البيانات.',
+                    textAlign: TextAlign.center,
+                    textDirection: ui.TextDirection.ltr,
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _initializeDatabase,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('إعادة المحاولة'),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => Clipboard.setData(
+                      ClipboardData(text: _error?.toString() ?? 'DATABASE_OPEN_FAILED'),
+                    ),
+                    icon: const Icon(Icons.copy_rounded),
+                    label: const Text('نسخ تفاصيل الخطأ'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class DatabaseRecoveryPage extends StatefulWidget {
+  const DatabaseRecoveryPage({super.key, required this.onRecovered});
+  final Future<void> Function() onRecovered;
+
+  @override
+  State<DatabaseRecoveryPage> createState() => _DatabaseRecoveryPageState();
+}
+
+class _DatabaseRecoveryPageState extends State<DatabaseRecoveryPage> {
+  final TextEditingController _backupPassword = TextEditingController();
+  bool _busy = false;
+  String? _message;
+
+  @override
+  void dispose() {
+    _backupPassword.dispose();
+    super.dispose();
+  }
+
+  Future<void> _restoreBackup() async {
+    if (_backupPassword.text.length < 12 || _backupPassword.text.length > 128) {
+      setState(() => _message = 'أدخل كلمة مرور النسخة الاحتياطية (12 إلى 128 حرفًا).');
+      return;
+    }
+    setState(() { _busy = true; _message = null; });
+    try {
+      final restored = await BackupService.instance.restoreFromPicker(_backupPassword.text);
+      if (!restored) return;
+      await widget.onRecovered();
+    } catch (error) {
+      if (mounted) setState(() => _message = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _startFresh() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.warning_amber_rounded, color: accentYellow),
+        title: const Text('بدء دفتر جديد؟'),
+        content: const Text(
+          'سيحفظ التطبيق ملف قاعدة البيانات القديم كما هو في أرشيف منفصل، '
+          'ثم ينشئ دفترًا جديدًا فارغًا بمفتاح تشفير جديد. لن تُحذف النسخة القديمة، '
+          'لكن لا يمكن فتحها دون مفتاحها الأصلي. تابع فقط إذا لم تكن تحتاج إلى '
+          'بيانات مالية سابقة، أو إذا كنت تحتفظ بنسخة احتياطية خارجية.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('أرشفة القديم وبدء جديد'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() { _busy = true; _message = null; });
+    try {
+      await AppDatabase.instance.startFreshDatabaseAfterMissingKey();
+      await widget.onRecovered();
+    } catch (error) {
+      if (mounted) setState(() => _message = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(22),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Center(child: BrandMark(size: 82)),
+                  const SizedBox(height: 20),
+                  Text(
+                    'نحتاج إلى استعادة قاعدة البيانات',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'ملف قاعدة البيانات موجود، لكن مفتاح التشفير المحفوظ لم يعد متاحًا. '
+                    'لن ننشئ مفتاحًا بديلًا لفتح الملف القديم حتى لا نخاطر ببياناتك.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: _backupPassword,
+                    obscureText: true,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    decoration: const InputDecoration(
+                      labelText: 'كلمة مرور النسخة الاحتياطية',
+                      hintText: '12 حرفًا على الأقل',
+                      prefixIcon: Icon(Icons.key_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _restoreBackup,
+                    icon: const Icon(Icons.restore_rounded),
+                    label: const Text('اختيار واستعادة نسخة مشفرة'),
+                  ),
+                  const SizedBox(height: 16),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'إذا لم تسجل حسابات أو حركات مالية وتريد البدء من الصفر، '
+                    'يمكن حفظ الملف القديم في الأرشيف وإنشاء قاعدة جديدة.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton.icon(
+                    onPressed: _busy ? null : _startFresh,
+                    icon: const Icon(Icons.add_to_drive_rounded),
+                    label: const Text('بدء دفتر جديد مع حفظ الملف القديم'),
+                  ),
+                  if (_busy) ...[
+                    const SizedBox(height: 16),
+                    const Center(child: CircularProgressIndicator()),
+                  ],
+                  if (_message != null) ...[
+                    const SizedBox(height: 12),
+                    SelectableText(
+                      _message!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: dangerRed),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: _busy ? null : widget.onRecovered,
+                    child: const Text('إعادة فحص قاعدة البيانات'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -418,8 +706,11 @@ class _SetupPinPageState extends State<SetupPinPage> {
       try {
         await AppDatabase.instance.database;
         await BackupService.instance.createScheduledLocalBackup();
-      } catch (_) {
-        // Setup must remain available; a manual backup is offered in Settings.
+      } catch (error, stackTrace) {
+        // The database startup gate immediately after PIN setup will present
+        // the recovery action or a retry screen; never silently mark it ready.
+        debugPrint('Initial database setup deferred: $error');
+        debugPrintStack(stackTrace: stackTrace);
       }
       widget.onDone();
     } catch (e) {
@@ -1055,7 +1346,6 @@ class _AddPartyPageState extends State<AddPartyPage> {
   final _notes = TextEditingController();
   bool _saving = false;
   String? _saveError;
-  String? _saveErrorDetails;
 
   bool get _isCustomer => widget.kind == 'customer';
   String get _entityName => _isCustomer ? 'العميل' : 'المورد';
@@ -1074,7 +1364,6 @@ class _AddPartyPageState extends State<AddPartyPage> {
     setState(() {
       _saving = true;
       _saveError = null;
-      _saveErrorDetails = null;
     });
 
     try {
@@ -1091,12 +1380,7 @@ class _AddPartyPageState extends State<AddPartyPage> {
     } catch (error, stackTrace) {
       debugPrint('AddPartyPage: failed to create ${widget.kind}: $error');
       debugPrintStack(stackTrace: stackTrace);
-      if (mounted) {
-        setState(() {
-          _saveError = partySaveError(error);
-          _saveErrorDetails = '$error\n$stackTrace';
-        });
-      }
+      if (mounted) setState(() => _saveError = partySaveError(error));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1255,23 +1539,7 @@ class _AddPartyPageState extends State<AddPartyPage> {
                   children: [
                     Icon(Icons.error_outline_rounded, color: colorScheme.error),
                     const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(_saveError!, style: TextStyle(color: colorScheme.onErrorContainer)),
-                          const SizedBox(height: 6),
-                          TextButton.icon(
-                            onPressed: _saveErrorDetails == null ? null : () async {
-                              await Clipboard.setData(ClipboardData(text: _saveErrorDetails!));
-                              if (mounted) showMessage(context, 'تم نسخ تفاصيل الخطأ');
-                            },
-                            icon: const Icon(Icons.copy_rounded, size: 18),
-                            label: const Text('نسخ تفاصيل الخطأ كاملة'),
-                          ),
-                        ],
-                      ),
-                    ),
+                    Expanded(child: Text(_saveError!, style: TextStyle(color: colorScheme.onErrorContainer))),
                   ],
                 ),
               ),
