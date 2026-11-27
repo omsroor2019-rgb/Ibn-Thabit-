@@ -71,7 +71,7 @@ class AppDatabase {
     return openDatabase(
       filePath,
       password: password,
-      version: 1,
+      version: 2,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
         await db.execute('PRAGMA journal_mode = WAL');
@@ -177,6 +177,64 @@ class AppDatabase {
         ''');
         await db.insert('app_meta', {'key': 'next_customer_no', 'value': '100001'});
         await db.insert('app_meta', {'key': 'next_supplier_no', 'value': '200001'});
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // Version 2 adds account-number counters and the audit table to
+        // installations created by earlier builds. Keep existing account data.
+        if (oldVersion < 2) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS audit_logs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              entity_type TEXT NOT NULL,
+              entity_id INTEGER NOT NULL,
+              action TEXT NOT NULL,
+              details TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS app_meta (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL
+            )
+          ''');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_audit_entity_date ON audit_logs(entity_type, entity_id, created_at DESC)',
+          );
+
+          final customerRows = await db.rawQuery(
+            "SELECT COALESCE(MAX(account_no), 100000) AS max_no FROM parties WHERE kind = 'customer'",
+          );
+          final supplierRows = await db.rawQuery(
+            "SELECT COALESCE(MAX(account_no), 200000) AS max_no FROM parties WHERE kind = 'supplier'",
+          );
+          final customerMax = (customerRows.first['max_no'] as int?) ?? 100000;
+          final supplierMax = (supplierRows.first['max_no'] as int?) ?? 200000;
+
+          final customerCounterRows = await db.query(
+            'app_meta', where: 'key = ?', whereArgs: ['next_customer_no'], limit: 1,
+          );
+          final supplierCounterRows = await db.query(
+            'app_meta', where: 'key = ?', whereArgs: ['next_supplier_no'], limit: 1,
+          );
+          final oldCustomerCounter = customerCounterRows.isEmpty
+              ? 100001
+              : (int.tryParse(customerCounterRows.first['value'] as String? ?? '') ?? 100001);
+          final oldSupplierCounter = supplierCounterRows.isEmpty
+              ? 200001
+              : (int.tryParse(supplierCounterRows.first['value'] as String? ?? '') ?? 200001);
+          final nextCustomer = [100001, customerMax + 1, oldCustomerCounter].reduce((a, b) => a > b ? a : b);
+          final nextSupplier = [200001, supplierMax + 1, oldSupplierCounter].reduce((a, b) => a > b ? a : b);
+
+          await db.execute(
+            'INSERT OR REPLACE INTO app_meta(key, value) VALUES(?, ?)',
+            ['next_customer_no', '$nextCustomer'],
+          );
+          await db.execute(
+            'INSERT OR REPLACE INTO app_meta(key, value) VALUES(?, ?)',
+            ['next_supplier_no', '$nextSupplier'],
+          );
+        }
       },
     );
   }
