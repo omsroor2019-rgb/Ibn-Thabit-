@@ -1074,6 +1074,7 @@ class _AddPartyPageState extends State<AddPartyPage> {
     setState(() {
       _saving = true;
       _saveError = null;
+      _saveErrorDetails = null;
     });
 
     try {
@@ -1093,9 +1094,7 @@ class _AddPartyPageState extends State<AddPartyPage> {
       if (mounted) {
         setState(() {
           _saveError = partySaveError(error);
-          // Keep the unabridged exception and stack trace available for support.
-          // The visible message remains short; the user can copy the full details.
-          _saveErrorDetails = '${error.toString()}\n\n$stackTrace';
+          _saveErrorDetails = '$error\n$stackTrace';
         });
       }
     } finally {
@@ -1251,28 +1250,26 @@ class _AddPartyPageState extends State<AddPartyPage> {
                   color: colorScheme.errorContainer,
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Column(
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(Icons.error_outline_rounded, color: colorScheme.error),
-                        const SizedBox(width: 10),
-                        Expanded(child: SelectableText(_saveError!, style: TextStyle(color: colorScheme.onErrorContainer))),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: AlignmentDirectional.centerEnd,
-                      child: TextButton.icon(
-                        onPressed: _saveErrorDetails == null ? null : () async {
-                          await Clipboard.setData(ClipboardData(text: _saveErrorDetails!));
-                          if (!mounted) return;
-                          showMessage(context, 'تم نسخ تفاصيل الخطأ كاملة. الصقها في المحادثة.');
-                        },
-                        icon: const Icon(Icons.copy_rounded, size: 18),
-                        label: const Text('نسخ تفاصيل الخطأ كاملة'),
+                    Icon(Icons.error_outline_rounded, color: colorScheme.error),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(_saveError!, style: TextStyle(color: colorScheme.onErrorContainer)),
+                          const SizedBox(height: 6),
+                          TextButton.icon(
+                            onPressed: _saveErrorDetails == null ? null : () async {
+                              await Clipboard.setData(ClipboardData(text: _saveErrorDetails!));
+                              if (mounted) showMessage(context, 'تم نسخ تفاصيل الخطأ');
+                            },
+                            icon: const Icon(Icons.copy_rounded, size: 18),
+                            label: const Text('نسخ تفاصيل الخطأ كاملة'),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -2269,6 +2266,10 @@ class ErrorTile extends StatelessWidget {
 void showMessage(BuildContext context, String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 String partySaveError(Object error) {
   final details = error.toString();
+  if (details.contains('DATABASE_OPEN_FAILED')) {
+    final compact = details.replaceAll('Bad state: ', '');
+    return 'تعذر فتح قاعدة البيانات المشفرة قبل الحفظ. تفاصيل الفحص: ${compact.length > 420 ? '${compact.substring(0, 420)}…' : compact}. لا تحذف بيانات التطبيق.';
+  }
   if (details.contains('database is locked') || details.contains('database table is locked')) {
     return 'قاعدة البيانات مشغولة الآن. انتظر قليلًا ثم حاول مرة أخرى.';
   }
