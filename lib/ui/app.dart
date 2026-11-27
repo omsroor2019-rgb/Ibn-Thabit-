@@ -12,9 +12,13 @@ import '../data/app_database.dart';
 import '../services/backup_service.dart';
 import '../services/security_service.dart';
 
-const Color brandGreen = Color(0xFF087A3C);
-const Color dangerRed = Color(0xFFDC3030);
-const Color accentYellow = Color(0xFFF4C430);
+const Color brandGreen = Color(0xFF176B45);
+const Color brandGreenDark = Color(0xFF0E5234);
+const Color brandGreenSoft = Color(0xFFE8F3EC);
+const Color dangerRed = Color(0xFFCE3535);
+const Color accentYellow = Color(0xFFFFC845);
+const Color accentYellowSoft = Color(0xFFFFF5D8);
+const Color appInk = Color(0xFF17251D);
 
 class ThemeController extends ChangeNotifier {
   ThemeMode mode = ThemeMode.system;
@@ -148,51 +152,152 @@ class _BinThabitAppState extends State<BinThabitApp> {
 
   ThemeData _theme(Brightness brightness) {
     final dark = brightness == Brightness.dark;
+    final surface = dark ? const Color(0xFF17231C) : Colors.white;
+    final canvas = dark ? const Color(0xFF0E1711) : const Color(0xFFF5F8F5);
     final scheme = ColorScheme.fromSeed(
       seedColor: brandGreen,
       brightness: brightness,
-      primary: dark ? const Color(0xFF66C58C) : brandGreen,
-      error: dangerRed,
+      primary: dark ? const Color(0xFF74D09A) : brandGreen,
+      onPrimary: dark ? const Color(0xFF062414) : Colors.white,
       secondary: accentYellow,
-      surface: dark ? const Color(0xFF17231C) : Colors.white,
+      onSecondary: const Color(0xFF352600),
+      error: dangerRed,
+      surface: surface,
+      onSurface: dark ? const Color(0xFFEAF2EC) : appInk,
     );
+
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      scaffoldBackgroundColor: dark ? const Color(0xFF101812) : const Color(0xFFF5F8F5),
+      scaffoldBackgroundColor: canvas,
+      visualDensity: VisualDensity.adaptivePlatformDensity,
       appBarTheme: AppBarThemeData(
-        backgroundColor: dark ? const Color(0xFF101812) : const Color(0xFFF5F8F5),
-        foregroundColor: dark ? Colors.white : const Color(0xFF17231C),
+        backgroundColor: canvas,
+        foregroundColor: scheme.onSurface,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
+        titleTextStyle: TextStyle(
+          color: scheme.onSurface,
+          fontSize: 19,
+          fontWeight: FontWeight.w800,
+        ),
+        iconTheme: IconThemeData(color: scheme.onSurface),
       ),
       cardTheme: CardThemeData(
-        color: dark ? const Color(0xFF1A2A20) : Colors.white,
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        color: surface,
+        surfaceTintColor: Colors.transparent,
+        elevation: dark ? 0 : 1,
+        shadowColor: brandGreen.withValues(alpha: .045),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(
+            color: dark ? Colors.white.withValues(alpha: .06) : const Color(0xFFE7EEE8),
+          ),
+        ),
         margin: EdgeInsets.zero,
       ),
       inputDecorationTheme: InputDecorationThemeData(
         filled: true,
-        fillColor: dark ? const Color(0xFF1D2B23) : Colors.white,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: brandGreen, width: 1.4)),
+        fillColor: dark ? const Color(0xFF1D2B23) : const Color(0xFFFAFCFA),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        hintStyle: TextStyle(color: scheme.onSurfaceVariant.withValues(alpha: .75)),
+        labelStyle: TextStyle(color: scheme.onSurfaceVariant),
+        prefixIconColor: scheme.primary,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: scheme.outlineVariant.withValues(alpha: .65)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: scheme.outlineVariant.withValues(alpha: .65)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: scheme.primary, width: 1.6),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: dangerRed),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: dangerRed, width: 1.5),
+        ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: brandGreen,
           foregroundColor: Colors.white,
-          minimumSize: const Size(0, 48),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          disabledBackgroundColor: brandGreen.withValues(alpha: .35),
+          disabledForegroundColor: Colors.white70,
+          minimumSize: const Size(0, 52),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)), minimumSize: const Size(0, 46)),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: scheme.primary,
+          side: BorderSide(color: scheme.primary.withValues(alpha: .28)),
+          minimumSize: const Size(0, 48),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
       ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: scheme.primary,
+          textStyle: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        height: 72,
+        backgroundColor: surface,
+        surfaceTintColor: Colors.transparent,
+        indicatorColor: dark ? const Color(0xFF355E43) : brandGreenSoft,
+        labelTextStyle: WidgetStatePropertyAll(
+          TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: scheme.onSurfaceVariant),
+        ),
+        iconTheme: WidgetStateProperty.resolveWith<IconThemeData?>((states) {
+          final selected = states.contains(WidgetState.selected);
+          return IconThemeData(color: selected ? scheme.primary : scheme.onSurfaceVariant, size: 22);
+        }),
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: brandGreen,
+        foregroundColor: Colors.white,
+        elevation: 3,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      ),
+      listTileTheme: ListTileThemeData(
+        iconColor: scheme.primary,
+        contentPadding: const EdgeInsetsDirectional.symmetric(horizontal: 16, vertical: 4),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+      dividerTheme: DividerThemeData(
+        color: scheme.outlineVariant.withValues(alpha: .55),
+        thickness: 1,
+        space: 1,
+      ),
+      progressIndicatorTheme: ProgressIndicatorThemeData(color: scheme.primary),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: dark ? const Color(0xFF26372C) : appInk,
+        contentTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: surface,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: surface,
+        surfaceTintColor: Colors.transparent,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
       ),
     );
   }
@@ -483,6 +588,7 @@ class _MainShellState extends State<MainShell> {
     return Directionality(textDirection: ui.TextDirection.rtl, child: Scaffold(
       body: IndexedStack(index: _index, children: pages),
       bottomNavigationBar: NavigationBar(
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         selectedIndex: _index,
         onDestinationSelected: _go,
         destinations: const [
@@ -544,7 +650,14 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           SliverPadding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 22), sliver: SliverList(delegate: SliverChildListDelegate([
             Text(DateFormat('EEEE، d MMMM yyyy', 'ar').format(DateTime.now()), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey)),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
+            FutureBuilder<SharedPreferences>(
+              future: prefsFuture,
+              builder: (_, prefs) => _DashboardWelcomeCard(
+                storeName: prefs.data?.getString('store_name') ?? 'بن ثابت',
+              ),
+            ),
+            const SizedBox(height: 18),
             if (snapshot.connectionState == ConnectionState.waiting && data == null)
               const SizedBox(height: 180, child: Center(child: CircularProgressIndicator()))
             else if (snapshot.hasError)
@@ -593,6 +706,72 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 }
 
+class _DashboardWelcomeCard extends StatelessWidget {
+  const _DashboardWelcomeCard({required this.storeName});
+  final String storeName;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.centerRight,
+          end: Alignment.bottomLeft,
+          colors: [brandGreen, brandGreenDark],
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(color: brandGreen.withValues(alpha: .16), blurRadius: 20, offset: const Offset(0, 8)),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Positioned(left: -26, top: -42, child: Container(
+            width: 150, height: 150,
+            decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white.withValues(alpha: .08), width: 22)),
+          )),
+          Positioned(left: 18, bottom: -34, child: Container(
+            width: 94, height: 94,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: accentYellow.withValues(alpha: .12)),
+          )),
+          Padding(
+            padding: const EdgeInsetsDirectional.fromSTEB(20, 20, 20, 20),
+            child: Row(
+              children: [
+                Expanded(child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(color: Colors.white.withValues(alpha: .13), borderRadius: BorderRadius.circular(30)),
+                      child: const Text('دفترك المالي اليومي', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                    ),
+                    const SizedBox(height: 12),
+                    Text('أهلًا بك في $storeName', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 5),
+                    Text('كل حسابات محلك في مكان واحد', style: TextStyle(color: Colors.white.withValues(alpha: .86), fontSize: 12)),
+                    const SizedBox(height: 14),
+                    Container(width: 42, height: 4, decoration: BoxDecoration(color: accentYellow, borderRadius: BorderRadius.circular(9))),
+                  ],
+                )),
+                const SizedBox(width: 12),
+                Container(
+                  width: 66, height: 66,
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+                  child: const BrandMark(size: 54),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class SmartHint extends StatelessWidget {
   const SmartHint({super.key, required this.customerCount, required this.supplierCount, required this.customers, required this.suppliers});
   final int customerCount;
@@ -606,11 +785,24 @@ class SmartHint extends StatelessWidget {
         : (customers.values.any((v) => v != 0) || suppliers.values.any((v) => v != 0))
             ? 'هناك أرصدة مفتوحة؛ راجع التحصيل والسداد.'
             : 'حساباتك الحالية متوازنة.';
+    final isEmpty = customerCount == 0 && supplierCount == 0;
+    final hintColor = isEmpty ? accentYellowSoft : brandGreenSoft;
+    final iconColor = isEmpty ? const Color(0xFF9A6A00) : brandGreen;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(15),
-      decoration: BoxDecoration(color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: .55), borderRadius: BorderRadius.circular(18)),
-      child: Row(children: [Icon(Icons.tips_and_updates_outlined, color: Theme.of(context).colorScheme.primary), const SizedBox(width: 10), Expanded(child: Text(text, style: const TextStyle(fontWeight: FontWeight.w600)))]),
+      padding: const EdgeInsetsDirectional.fromSTEB(14, 13, 14, 13),
+      decoration: BoxDecoration(
+        color: Theme.of(context).brightness == Brightness.dark
+            ? (isEmpty ? const Color(0xFF3A3017) : const Color(0xFF1C3827))
+            : hintColor,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: iconColor.withValues(alpha: .10)),
+      ),
+      child: Row(children: [
+        Container(width: 34, height: 34, decoration: BoxDecoration(color: iconColor.withValues(alpha: .12), borderRadius: BorderRadius.circular(11)), child: Icon(Icons.tips_and_updates_outlined, color: iconColor, size: 19)),
+        const SizedBox(width: 11),
+        Expanded(child: Text(text, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600))),
+      ]),
     );
   }
 }
@@ -622,13 +814,23 @@ class BalanceSummaryCard extends StatelessWidget {
   final Color color;
   final Map<String, int> values;
   @override
-  Widget build(BuildContext context) => Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Row(children: [CircleAvatar(backgroundColor: color.withValues(alpha: .12), child: Icon(icon, color: color)), const SizedBox(width: 10), Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)))]),
-    const SizedBox(height: 14),
-    CurrencyLine(currency: 'SAR', amountMinor: values['SAR'] ?? 0),
-    const SizedBox(height: 6),
-    CurrencyLine(currency: 'YER', amountMinor: values['YER'] ?? 0),
-  ])));
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(width: 42, height: 42, decoration: BoxDecoration(color: color.withValues(alpha: .11), borderRadius: BorderRadius.circular(14)), child: Icon(icon, color: color)),
+          const SizedBox(width: 11),
+          Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14))),
+          Container(width: 7, height: 28, decoration: BoxDecoration(color: accentYellow, borderRadius: BorderRadius.circular(8))),
+        ]),
+        const SizedBox(height: 16),
+        CurrencyLine(currency: 'SAR', amountMinor: values['SAR'] ?? 0),
+        const SizedBox(height: 9),
+        CurrencyLine(currency: 'YER', amountMinor: values['YER'] ?? 0),
+      ]),
+    ),
+  );
 }
 
 class CurrencyLine extends StatelessWidget {
@@ -700,22 +902,71 @@ class _ContactsPageState extends State<ContactsPage> {
           await Navigator.push(context, MaterialPageRoute(builder: (_) => ArchivedPartiesPage(kind: widget.kind)));
           if (mounted) setState(_load);
         }, icon: const Icon(Icons.inventory_2_outlined)),
-        IconButton(tooltip: 'إضافة حساب', onPressed: () async {
-          await Navigator.push(context, MaterialPageRoute(builder: (_) => AddPartyPage(kind: widget.kind)));
-          if (mounted) setState(_load);
-        }, icon: const Icon(Icons.person_add_alt_rounded)),
       ]),
       body: Column(children: [
-        Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 12), child: TextField(controller: _search, onChanged: (_) => setState(_load), decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'ابحث بالاسم أو الرقم أو الهاتف', isDense: true))),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1D3828) : brandGreenSoft,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: brandGreen.withValues(alpha: .08)),
+            ),
+            child: Row(children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface.withValues(alpha: .8),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  widget.kind == 'customer' ? Icons.people_alt_rounded : Icons.local_shipping_outlined,
+                  color: Theme.of(context).colorScheme.primary,
+                  size: 25,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(widget.kind == 'customer' ? 'إدارة حسابات العملاء' : 'إدارة حسابات الموردين',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 3),
+                  Text(
+                    widget.kind == 'customer'
+                        ? 'سجّل العملاء وتابع الديون والدفعات.'
+                        : 'سجّل الموردين وتابع المستحقات والسداد.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              )),
+            ]),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: TextField(
+            controller: _search,
+            onChanged: (_) => setState(_load),
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search_rounded),
+              hintText: 'ابحث بالاسم أو رقم الحساب أو الهاتف',
+              isDense: true,
+            ),
+          ),
+        ),
         Expanded(child: FutureBuilder<List<Map<String, Object?>>>(future: _future, builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          if (snapshot.hasError) return const EmptyState(icon: Icons.error_outline, title: 'تعذر تحميل الحسابات', subtitle: 'أعد المحاولة');
+          if (snapshot.hasError) return EmptyState(icon: Icons.error_outline, title: 'تعذر تحميل الحسابات', subtitle: userError(snapshot.error!));
           final parties = snapshot.data ?? [];
           if (parties.isEmpty) return EmptyState(icon: widget.kind == 'customer' ? Icons.people_outline : Icons.local_shipping_outlined, title: 'لا توجد حسابات', subtitle: 'أضف أول حساب للبدء');
           return RefreshIndicator(onRefresh: () async => setState(_load), child: ListView.separated(padding: const EdgeInsets.fromLTRB(16, 0, 16, 18), itemCount: parties.length, separatorBuilder: (_, __) => const SizedBox(height: 8), itemBuilder: (context, index) {
             final item = parties[index];
             return Card(child: ListTile(
-              leading: CircleAvatar(backgroundColor: Theme.of(context).colorScheme.primaryContainer, child: Icon(widget.kind == 'customer' ? Icons.person_outline_rounded : Icons.storefront_outlined, color: brandGreen)),
+              leading: CircleAvatar(backgroundColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF294A35) : brandGreenSoft, child: Icon(widget.kind == 'customer' ? Icons.person_outline_rounded : Icons.storefront_outlined, color: Theme.of(context).colorScheme.primary)),
               title: Text(item['name'] as String, style: const TextStyle(fontWeight: FontWeight.bold)),
               subtitle: Text((item['phone'] as String).trim().isEmpty
                   ? 'رقم الحساب ${item['account_no']}'
@@ -797,37 +1048,216 @@ class AddPartyPage extends StatefulWidget {
 }
 
 class _AddPartyPageState extends State<AddPartyPage> {
+  final _formKey = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _phone = TextEditingController();
   final _address = TextEditingController();
   final _notes = TextEditingController();
   bool _saving = false;
+  String? _saveError;
+
+  bool get _isCustomer => widget.kind == 'customer';
+  String get _entityName => _isCustomer ? 'العميل' : 'المورد';
+
   @override
-  void dispose() { _name.dispose(); _phone.dispose(); _address.dispose(); _notes.dispose(); super.dispose(); }
-  Future<void> _save() async {
-    if (_name.text.trim().isEmpty) { showMessage(context, 'أدخل الاسم'); return; }
-    setState(() => _saving = true);
-    try {
-      final id = await AppDatabase.instance.createParty(kind: widget.kind, name: _name.text, phone: _phone.text, address: _address.text, notes: _notes.text);
-      if (!mounted) return;
-      final party = await AppDatabase.instance.getParty(id);
-      showMessage(context, 'تم إنشاء الحساب رقم ${party?['account_no']}');
-      Navigator.pop(context);
-    } catch (e) {
-      if (mounted) showMessage(context, userError(e));
-    } finally { if (mounted) setState(() => _saving = false); }
+  void dispose() {
+    _name.dispose();
+    _phone.dispose();
+    _address.dispose();
+    _notes.dispose();
+    super.dispose();
   }
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(widget.kind == 'customer' ? 'عميل جديد' : 'مورد جديد')),
-    body: ListView(padding: const EdgeInsets.all(16), children: [
-      TextField(controller: _name, textCapitalization: TextCapitalization.words, maxLength: 120, decoration: const InputDecoration(labelText: 'الاسم *', prefixIcon: Icon(Icons.person_outline))),
-      const SizedBox(height: 12), TextField(controller: _phone, keyboardType: TextInputType.phone, maxLength: 32, decoration: const InputDecoration(labelText: 'رقم الهاتف', prefixIcon: Icon(Icons.phone_outlined))),
-      const SizedBox(height: 12), TextField(controller: _address, maxLength: 240, decoration: const InputDecoration(labelText: 'العنوان', prefixIcon: Icon(Icons.location_on_outlined))),
-      const SizedBox(height: 12), TextField(controller: _notes, maxLines: 2, maxLength: 1000, decoration: const InputDecoration(labelText: 'ملاحظات', prefixIcon: Icon(Icons.notes_rounded))),
-      const SizedBox(height: 22), SizedBox(width: double.infinity, child: FilledButton(onPressed: _saving ? null : _save, child: _saving ? const CircularProgressIndicator() : const Text('حفظ الحساب'))),
-    ]),
+
+  Future<void> _save() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+
+    try {
+      await AppDatabase.instance.createParty(
+        kind: widget.kind,
+        name: _name.text,
+        phone: _phone.text,
+        address: _address.text,
+        notes: _notes.text,
+      );
+      if (!mounted) return;
+      showMessage(context, 'تمت إضافة $_entityName بنجاح');
+      Navigator.of(context).pop(true);
+    } catch (error, stackTrace) {
+      debugPrint('AddPartyPage: failed to create ${widget.kind}: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      if (mounted) setState(() => _saveError = userError(error));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  InputDecoration _fieldDecoration(String label, IconData icon, {String? hint}) => InputDecoration(
+    labelText: label,
+    hintText: hint,
+    prefixIcon: Icon(icon),
+    counterText: '',
   );
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('إضافة $_entityName جديد'),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          child: SizedBox(
+            height: 54,
+            child: FilledButton.icon(
+              onPressed: _saving ? null : _save,
+              icon: _saving
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.person_add_alt_1_rounded),
+              label: Text(_saving ? 'جارٍ الحفظ...' : 'حفظ $_entityName'),
+            ),
+          ),
+        ),
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: theme.brightness == Brightness.dark ? const Color(0xFF1D3828) : brandGreenSoft,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: brandGreen.withValues(alpha: .09)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 54,
+                    height: 54,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surface.withValues(alpha: .8),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(
+                      _isCustomer ? Icons.person_add_alt_1_rounded : Icons.local_shipping_outlined,
+                      size: 28,
+                      color: colorScheme.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'بيانات $_entityName',
+                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'أدخل الاسم فقط لإضافة الحساب، وبقية البيانات اختيارية.',
+                          style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.onPrimaryContainer),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text('المعلومات الأساسية', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    TextFormField(
+                      controller: _name,
+                      autofocus: true,
+                      maxLength: 120,
+                      textCapitalization: TextCapitalization.words,
+                      textInputAction: TextInputAction.next,
+                      decoration: _fieldDecoration('اسم $_entityName *', Icons.badge_outlined, hint: 'اكتب الاسم الكامل'),
+                      validator: (value) => (value ?? '').trim().isEmpty ? 'الاسم مطلوب لإضافة الحساب' : null,
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: _phone,
+                      keyboardType: TextInputType.phone,
+                      textInputAction: TextInputAction.next,
+                      maxLength: 32,
+                      decoration: _fieldDecoration('رقم الهاتف', Icons.phone_outlined, hint: 'اختياري'),
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: _address,
+                      textInputAction: TextInputAction.next,
+                      maxLength: 240,
+                      decoration: _fieldDecoration('العنوان', Icons.location_on_outlined, hint: 'المنطقة أو المدينة'),
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: _notes,
+                      minLines: 2,
+                      maxLines: 4,
+                      maxLength: 1000,
+                      decoration: _fieldDecoration('ملاحظات', Icons.notes_rounded, hint: 'أي تفاصيل إضافية (اختياري)'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded, color: colorScheme.primary),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'سيُنشأ رقم الحساب تلقائيًا، ولن تحتاج إلى إدخاله بنفسك.',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_saveError != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.error_outline_rounded, color: colorScheme.error),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(_saveError!, style: TextStyle(color: colorScheme.onErrorContainer))),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class EditPartyPage extends StatefulWidget {
@@ -1555,7 +1985,7 @@ class SettingsPage extends StatelessWidget {
       _SettingsItem(icon: Icons.info_outline_rounded, title: 'حقوق التطبيق', subtitle: 'المهندس عبد العزيز عوض بن ثابت', onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RightsPage()))),
     ]),
     const SizedBox(height: 18),
-    const Center(child: Text('بن ثابت • إصدار 1.0.0', style: TextStyle(color: Colors.grey, fontSize: 12))),
+    const Center(child: Text('بن ثابت • إصدار 1.0.2', style: TextStyle(color: Colors.grey, fontSize: 12))),
   ]));
 }
 
@@ -1813,6 +2243,9 @@ class ErrorTile extends StatelessWidget {
 void showMessage(BuildContext context, String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 String userError(Object error) {
   final text = error.toString();
+  if (text.contains('no such table: app_meta')) return 'قاعدة بيانات إصدار سابق. حدّث التطبيق إلى النسخة الجديدة ثم افتحه مجددًا.';
+  if (text.contains('database is locked') || text.contains('database table is locked')) return 'قاعدة البيانات مشغولة الآن. انتظر قليلًا ثم حاول مرة أخرى.';
+  if (text.contains('UNIQUE constraint failed: parties.account_no')) return 'تعذر إنشاء رقم الحساب. أغلق التطبيق وافتحه مجددًا ثم أعد المحاولة.';
   if (text.contains('المبلغ أكبر') || text.contains('payment exceeds outstanding balance')) return 'المبلغ أكبر من الرصيد المتبقي بهذه العملة';
   if (text.contains('operation would make')) return 'لا يمكن تنفيذ العملية لأنها ستجعل رصيد الحساب سالبًا.';
   if (text.contains('لا يمكن حذف هذا الدين')) return 'لا يمكن حذف الدين لارتباطه بمدفوعات؛ راجع الكشف أولًا.';
