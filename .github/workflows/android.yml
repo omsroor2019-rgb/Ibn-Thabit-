@@ -79,6 +79,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 tool/verify_schema.py
+          python3 tool/verify_recovery.py
+          python3 tool/verify_android_setup.py
+          bash -n tool/prepare_android.sh
 
       # 7. تحميل مكتبات المشروع
       - name: Install Flutter dependencies
