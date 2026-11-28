@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Exercise the Android preparation script against a minimal Flutter scaffold."""
+"""Verify Android preparation without changing the installed Flutter SDK."""
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import tempfile
@@ -15,12 +16,19 @@ with tempfile.TemporaryDirectory(prefix='bin-thabit-android-check-') as temp:
     shutil.copy2(ROOT / 'tool/patch_flutter_gradle.sh', work / 'tool/patch_flutter_gradle.sh')
     shutil.copytree(ROOT / 'tool/android', work / 'tool/android')
 
-    # Simulate the Flutter SDK Gradle build file used by Flutter 3.50.1.
+    # Provide a minimal Flutter SDK tree. The preparation script must not edit it.
     fake_flutter = work / 'fake_flutter'
     flutter_gradle = fake_flutter / 'packages/flutter_tools/gradle/build.gradle.kts'
     flutter_gradle.parent.mkdir(parents=True)
-    flutter_gradle.write_text('plugins {\n    id(\"org.gradle.kotlin.kotlin-dsl\") version \"6.5.7\"\n}\n', encoding='utf-8')
+    original_flutter_gradle = (
+        'plugins {\n'
+        '    id("org.gradle.kotlin.kotlin-dsl") version "6.5.7"\n'
+        '}\n'
+    )
+    flutter_gradle.write_text(original_flutter_gradle, encoding='utf-8')
 
+    # Prepare a minimal Android scaffold first so this test does not invoke
+    # `flutter create` or depend on network access / a globally installed SDK.
     manifest = work / 'android/app/src/main/AndroidManifest.xml'
     manifest.parent.mkdir(parents=True)
     manifest.write_text('''<?xml version="1.0" encoding="utf-8"?>
@@ -46,12 +54,30 @@ with tempfile.TemporaryDirectory(prefix='bin-thabit-android-check-') as temp:
 }
 ''', encoding='utf-8')
 
-    import os
     env = os.environ.copy()
     env['FLUTTER_ROOT'] = str(fake_flutter)
+    env['GRADLE_USER_HOME'] = str(work / 'gradle-home')
     subprocess.run(['bash', 'prepare_android.sh'], cwd=work, env=env, check=True)
 
-    assert 'version \"6.7.13\"' in flutter_gradle.read_text(encoding='utf-8')
+    # The old check incorrectly expected a hard-coded Kotlin DSL version in
+    # the Flutter SDK. The current strategy intentionally leaves that SDK file
+    # untouched and configures plugin resolution through a Gradle init script.
+    assert flutter_gradle.read_text(encoding='utf-8') == original_flutter_gradle, (
+        'Flutter SDK Gradle files must remain unchanged'
+    )
+
+    init_script = work / 'gradle-home/init.d/00-flutter-plugin-repositories.gradle'
+    assert init_script.is_file(), 'Gradle plugin repository init script was not created'
+    init_text = init_script.read_text(encoding='utf-8')
+    for required in (
+        'gradlePluginPortal()',
+        'google()',
+        'mavenCentral()',
+        'resolutionStrategy.eachPlugin',
+        "requestedPlugin.id.id == 'org.gradle.kotlin.kotlin-dsl'",
+        'details.useModule("org.gradle.kotlin:gradle-kotlin-dsl-plugins:${requestedPlugin.version}")',
+    ):
+        assert required in init_text, f'Missing Gradle plugin-resolution setting: {required}'
 
     tree = ET.parse(manifest)
     app = tree.getroot().find('application')
@@ -73,7 +99,8 @@ with tempfile.TemporaryDirectory(prefix='bin-thabit-android-check-') as temp:
     proguard = work / 'android/app/proguard-rules.pro'
     assert proguard.exists() and 'net.sqlcipher' in proguard.read_text(encoding='utf-8')
 
+print('PASS: Gradle plugin repositories and Kotlin DSL module mapping are configured')
+print('PASS: Flutter SDK Gradle files remain unchanged')
 print('PASS: Android manifest labels, cleartext, backup exclusions and device-transfer rules')
 print('PASS: generated MainActivity retains FLAG_SECURE')
 print('PASS: Android minSdk and SQLCipher ProGuard configuration')
-print('PASS: Flutter 3.50.1 included Gradle Kotlin DSL plugin alignment')
