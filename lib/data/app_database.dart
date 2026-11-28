@@ -83,6 +83,42 @@ class AppDatabase {
     }
   }
 
+  /// Returns true when any SQLite database artifact contains bytes.
+  /// If the complete DB set exists but every artifact is zero bytes, preserve
+  /// those empty remnants under unique archive names and allow a clean DB to
+  /// be initialized. A non-empty main/WAL/SHM/journal file always blocks key
+  /// regeneration so potentially recoverable data is never overwritten.
+  Future<bool> _archiveEmptyDatabaseArtifactsIfSafe(String filePath) async {
+    const suffixes = ['', '-wal', '-shm', '-journal'];
+    final existing = <(String, File)>[];
+
+    for (final suffix in suffixes) {
+      final file = File('$filePath$suffix');
+      if (!await file.exists()) continue;
+      final length = await file.length();
+      if (length > 0) return true;
+      existing.add((suffix, file));
+    }
+
+    if (existing.isEmpty) return false;
+
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    for (final entry in existing) {
+      final suffix = entry.$1;
+      final source = entry.$2;
+      final archive = File('$filePath.empty-$stamp$suffix');
+      if (await archive.exists()) {
+        throw StateError('تعذر إنشاء أرشيف فريد لملف قاعدة البيانات الفارغ؛ لم نتابع التهيئة');
+      }
+      try {
+        await source.rename(archive.path);
+      } catch (error) {
+        throw StateError('تعذر حفظ ملف قاعدة البيانات الفارغ في الأرشيف؛ لم ننشئ مفتاحًا جديدًا: $error');
+      }
+    }
+    return false;
+  }
+
   Future<Database> _open() async {
     final filePath = await databasePath;
     // Keep the database handle in this method scope for the open-error handler.
@@ -100,14 +136,11 @@ class AppDatabase {
       if (await probe.exists()) await probe.delete();
     }
 
-    // Any artifact of the DB set means this is not a clean first launch.
-    // A zero-byte main file can be left by an interrupted native open, and a
-    // WAL/journal can carry data even if the main file is absent. In all such
-    // cases require the original key or explicit recovery; never mint a key.
-    final databaseExists = await File(filePath).exists() ||
-        await File('$filePath-wal').exists() ||
-        await File('$filePath-shm').exists() ||
-        await File('$filePath-journal').exists();
+    // Non-empty database/WAL/SHM/journal files may contain recoverable data
+    // and therefore require the original key. An all-zero-byte artifact set
+    // cannot contain SQLite records: archive it intact, then allow a clean
+    // database key to be created instead of trapping first-time setup.
+    final databaseExists = await _archiveEmptyDatabaseArtifactsIfSafe(filePath);
     final password = await SecurityService.instance.getOrCreateDatabasePassword(
       databaseExists: databaseExists,
     );
