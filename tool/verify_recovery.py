@@ -21,10 +21,11 @@ require('hasValidDatabasePassword()' in SECURITY and
         'Missing and malformed stored keys must route to explicit recovery')
 require('getOrCreateDatabasePassword({required bool databaseExists})' in SECURITY,
         'Callers must explicitly declare whether an encrypted DB already exists')
-require("final databaseExists = await File(filePath).exists() ||" in DATABASE and
-        "await File('$filePath-wal').exists()" in DATABASE and
-        "await File('$filePath-journal').exists()" in DATABASE,
-        'Zero-byte DB files and SQLite sidecars must block automatic key regeneration')
+require('Future<bool> _archiveEmptyDatabaseArtifactsIfSafe(String filePath) async' in DATABASE and
+        'if (length > 0) return true;' in DATABASE and
+        'await source.rename(archive.path);' in DATABASE and
+        'final databaseExists = await _archiveEmptyDatabaseArtifactsIfSafe(filePath);' in DATABASE,
+        'Only an all-zero-byte DB artifact set may be archived before clean key creation; non-empty artifacts must be preserved')
 require("if (databaseExists)" in SECURITY and 'DatabaseKeyMissingException' in SECURITY,
         'Do not generate a replacement key for an existing encrypted database')
 require("'mode': 'empty_database_reset'" in SECURITY and "'version': 3" in SECURITY,
@@ -50,7 +51,7 @@ require('getOrCreateDatabasePassword(databaseExists: true)' in BACKUP,
         'Backup creation must not silently create a key when an existing DB key is missing')
 
 print('PASS: missing SQLCipher key is distinguished from ordinary open errors')
-print('PASS: normal key creation is blocked for existing encrypted database files')
+print('PASS: non-empty encrypted DB artifacts block key regeneration; all-zero-byte remnants are archived safely')
 print('PASS: explicit reset journals recovery and archives old database files before removal')
 print('PASS: interrupted reset can be completed on next app launch')
 print('PASS: startup gate offers encrypted backup restore or confirmed fresh ledger')
